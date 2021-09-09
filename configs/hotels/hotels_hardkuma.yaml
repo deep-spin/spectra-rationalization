@@ -1,0 +1,88 @@
+# general args
+seed: 38    # for reproducibility
+default_root_dir: 'experiments/hotels-hardkuma/'  # path to save logs and models
+
+
+# training args
+train:
+
+    # io
+    save_rationales: True       # rationales will be saved in a .csv in the default_root_dir as `rationales-{timestamp}.csv`
+    save_tokenizer: True        # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
+    save_label_encoder: True    # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
+    gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
+
+    # data
+    dm: 'hotel_location'                     # data module name (see docs for more options)
+    batch_size: 32                  # minibatch size
+    num_workers: 4                  # number of workers used for data loading (0 means that only a single core will be used)
+    vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
+
+    # early stopping
+    early_stopping: False
+    monitor: 'val_f1score'      # quantity to be monitored
+    monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
+    monitor_patience: 25         # number of epochs to wait for early stopping
+
+    # pytorch-lightning rationalizer model
+    model: 'hardkuma'
+    embed_fixed: True
+
+    # model: optimizer
+    optimizer: 'adam'
+    lr: 0.0001
+    weight_decay: 0.00001
+    betas: [0.9, 0.999]
+    amsgrad: False
+    momentum: 0.0
+    dampening: 0.0
+    nesterov: False
+    alpha: 0.99   # for rmsprop
+    centered: False  # for rmsprop
+    lambd: 0.0001  # for asgd
+    t0: 1000000.0  # for asgd
+
+    # model: lr scheduler
+    scheduler: 'multistep'
+    milestones: [25, 50, 75]
+    lr_decay: 0.97  # a.k.a gamma
+
+    # model: architecture
+    emb_type: 'glove'
+    emb_path: '840B'  
+    hidden_size: 200
+    dropout: 0.1
+    sentence_encoder_layer_type: 'lstm'
+    use_dependent_generator: False  # it seems Bastings et. al. used an independent generator
+
+
+    # model: loss
+    contiguous: False
+    topk: False
+    budget: 15
+    lasso: 0
+    lagrange_lr: 0.05
+    lambda_init: 0.0001
+    alpha: 0.5
+    lambda_min: 0.000001
+    lambda_max: 1
+
+    # trainer (will be passed to pytorch-lightning's Trainer object)
+    # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
+    gpus: 1
+    gradient_clip_val: 5.0
+    min_epochs: 5
+    max_epochs: 25
+    #limit_test_batches:
+    #limit_train_batches: 10
+    #limit_val_batches: 2
+    #log_every_n_steps: 10
+
+
+# the options defined here will overwrite the ones defined in the checkpoint
+predict:
+    # ckpt: null  # will be defined via cli --ckpt or will get last checkpoint version if it exists
+    gpus: 1
+    load_tokenizer: True       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
+    load_label_encoder: True   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+

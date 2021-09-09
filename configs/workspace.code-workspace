@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../../H3"
+		},
+		{
+			"path": "../../transliteration"
+		},
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../interpretable_predictions"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../venv-rationalizers/lib/python3.6/site-packages/datasets"
+		}
+	],
+	"settings": {}
+}

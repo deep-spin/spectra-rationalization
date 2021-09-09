@@ -127,3 +127,15 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Custom
+data/
+log/
+experiments/
+tmp/
+.word_vectors_cache/
+experiments/
+lp-sparsemap/
+eigen/
+dist/
+build/
