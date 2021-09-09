@@ -22,8 +22,8 @@ All material is made available under the MIT license. You can **use, redistribut
 This code was tested on `Python 3.8.2`. To install, follow these steps:
 
 1. In a virtual environment, first install Cython: `pip install cython`
-2. Clone the [Eigen](https://gitlab.com/libeigen/eigen) repository to your home: `git clone git@gitlab.com:libeigen/eigen.git`
-3. Clone the [LP-SparseMAP](https://github.com/nunonmg/lp-sparsemap) fork repository to your home, and follow the installation instructions found there
+2. Clone the [Eigen](https://gitlab.com/libeigen/eigen.git) repository to the main folder: `git clone git@gitlab.com:libeigen/eigen.git`
+3. Clone the [LP-SparseMAP](https://github.com/nunonmg/lp-sparsemap) fork repository to main folder, and follow the installation instructions found there
 4. Install PyTorch: `pip install torch` (we used version 1.6.0)
 5. Install the requirements: `pip install -r requirements.txt`
 6. Install the `spectra-rationalization` package: `pip install .` (or in editable mode if you want to make changes: `pip install -e .`)
@@ -42,12 +42,12 @@ To train a model you need to define a `.yaml` config. We have made available sev
 
 Train **SPECTRA** on *AgNews*: 
 ```bash
-python3 -W ignore rationalizers train --config configs/agnews/agnews-spectra
+python3 -W ignore rationalizers train --config configs/agnews/agnews_spectra
 ```
 
 Train **HardKuma** on *IMDB*:
 ```bash
-python3 -W ignore rationalizers train --config configs/imdb/imdb-hardkuma
+python3 -W ignore rationalizers train --config configs/imdb/imdb_hardkuma
 ```
 ---
 
@@ -57,7 +57,7 @@ To test a model, you can use the same `.yaml` config you used for training. Afte
 
 Test **SPECTRA** on *AgNews*: 
 ```bash
-python3 -W ignore rationalizers predict --config configs/agnews/agnews-spectra --ckpt {ckpt_path}
+python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra --ckpt {ckpt_path}
 ```
 ---
 ### Resume Training
@@ -66,7 +66,7 @@ If for some reason you want to resume training from a given checkpoint, you will
 
 Resume **SPECTRA** on *AgNews*: 
 ```bash
-python3 -W ignore rationalizers predict --config configs/agnews/agnews-spectra --ckpt {ckpt_path}
+python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra --ckpt {ckpt_path}
 ```
 ---
 

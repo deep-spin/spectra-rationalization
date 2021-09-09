@@ -24,7 +24,7 @@ train:
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'sparsemap'
+    model: 'spectra'
     embed_fixed: True
     classification: True
 
