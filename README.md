@@ -1,5 +1,5 @@
 # SPECTRA: Sparse Structured Text Rationalization
-Official implementation of the EMNLP 2021 paper **SPECTRA: Sparse Structured Text Rationalization**.
+Official implementation of the **EMNLP 2021** paper **SPECTRA: Sparse Structured Text Rationalization**.
 
 *Nuno M Guerreiro* and *André Martins*
 
