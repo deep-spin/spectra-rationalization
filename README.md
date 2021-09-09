@@ -7,7 +7,7 @@ Official implementation of the EMNLP 2021 paper **SPECTRA: Sparse Structured Tex
 
 ----------
 
-**If you use this code in your work, then please cite our paper.**
+**If you use this code in your work, please cite our paper.**
 
 ----------
 
