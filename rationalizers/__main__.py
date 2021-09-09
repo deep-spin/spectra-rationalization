@@ -30,7 +30,6 @@ if __name__ == "__main__":
         "default_root_dir": yaml_config_dict["default_root_dir"],
     }
 
-
     # define args for each task
     if tmp_args.task == "train":
         config_dict = {**general_dict, **yaml_config_dict["train"]}
@@ -68,7 +67,6 @@ if __name__ == "__main__":
             "ckpt": ckpt_path,
         }
 
-
     elif tmp_args.task == "resume":
         # define path to checkpoint by following this priority:
         # 1. argparse
@@ -88,7 +86,6 @@ if __name__ == "__main__":
             **general_dict,
             "ckpt": ckpt_path,
         }
-
 
     # define args
     args = argparse.Namespace(**config_dict)

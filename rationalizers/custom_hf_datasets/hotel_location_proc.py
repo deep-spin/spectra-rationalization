@@ -41,7 +41,6 @@ This dataset consists of hotel reviews from TripAdvisor
 _URL = "http://web.tecnico.ulisboa.pt/~ist178550/hotel_location_proc.zip"
 
 
-
 class HotelLocationDatasetConfig(datasets.BuilderConfig):
     """BuilderConfig for Hotel"""
 

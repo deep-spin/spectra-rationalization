@@ -147,4 +147,3 @@ class SSTDataModule(BaseDataModule):
         self.dataset.set_format(
             type="torch", columns=["input_ids", "label"], output_all_columns=True
         )
-    

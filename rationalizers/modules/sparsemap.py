@@ -13,6 +13,7 @@ from lpsmap import (
     AtMostOne,
 )
 
+
 def seq_budget_smap(
     unary_scores,
     transition_scores,
@@ -23,7 +24,7 @@ def seq_budget_smap(
     temperature=0.01,
 ):
     """
-    H:SeqBudget strategy for highlights extraction 
+    H:SeqBudget strategy for highlights extraction
     """
     unary_scores.shape[0]
 
@@ -37,7 +38,7 @@ def seq_budget_smap(
 
 def matching_smap(scores, max_iter=5, temperature=1, init=True, budget=None):
     """
-    M:XORAtMostOne strategy for matchings extraction 
+    M:XORAtMostOne strategy for matchings extraction
     """
 
     m, n = scores.shape
@@ -53,7 +54,7 @@ def matching_smap(scores, max_iter=5, temperature=1, init=True, budget=None):
 
 def matching_smap_atmostone(scores, max_iter=5, temperature=1, init=True, budget=None):
     """
-    M:AtMostOne2 strategy for matchings extraction 
+    M:AtMostOne2 strategy for matchings extraction
     """
 
     m, n = scores.shape
@@ -71,7 +72,7 @@ def matching_smap_atmostone_budget(
     scores, max_iter=5, temperature=1, init=True, budget=None
 ):
     """
-    M:Budget strategy for matchings extraction 
+    M:Budget strategy for matchings extraction
     """
 
     m, n = scores.shape
@@ -79,9 +80,8 @@ def matching_smap_atmostone_budget(
     z = fg.variable_from(scores / temperature)
     fg.add(Budget(z, budget=budget))
     for i in range(m):
-        fg.add(AtMostOne(z[i, :]))   
+        fg.add(AtMostOne(z[i, :]))
     for j in range(n):
-        fg.add(AtMostOne(z[:, j]))  # some cols may be 0 
+        fg.add(AtMostOne(z[:, j]))  # some cols may be 0
     fg.solve(max_iter=max_iter)
     return z.value.cuda()
-

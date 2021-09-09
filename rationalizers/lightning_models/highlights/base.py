@@ -111,7 +111,6 @@ class BaseRationalizer(pl.LightningModule):
         labels = batch["labels"]
         mask = input_ids != constants.PAD_ID
         prefix = "train"
-        
 
         # forward-pass
         z, y_hat = self(input_ids, mask=mask, current_epoch=self.current_epoch)
@@ -138,11 +137,17 @@ class BaseRationalizer(pl.LightningModule):
             on_step=True,
             on_epoch=False,
         )
-        
+
         if self.is_multilabel:
-            metrics_to_wandb = {"train_ps": loss_stats["train_ps"], "train_loss": loss_stats["criterion"]}
+            metrics_to_wandb = {
+                "train_ps": loss_stats["train_ps"],
+                "train_loss": loss_stats["criterion"],
+            }
         else:
-            metrics_to_wandb = {"train_ps": loss_stats["train_ps"], "train_loss": loss_stats["mse"]}
+            metrics_to_wandb = {
+                "train_ps": loss_stats["train_ps"],
+                "train_loss": loss_stats["mse"],
+            }
 
         self.logger.log_metrics(metrics_to_wandb, self.global_step)
 
@@ -283,7 +288,7 @@ class BaseRationalizer(pl.LightningModule):
                 precision = self.test_precision(preds, labels)
                 recall = self.test_recall(preds, labels)
                 f1_score = 2 * precision * recall / (precision + recall)
-            
+
             dict_metrics[f"{prefix}_precision"] = precision
             dict_metrics[f"{prefix}_recall"] = recall
             dict_metrics[f"{prefix}_f1score"] = f1_score
@@ -309,7 +314,7 @@ class BaseRationalizer(pl.LightningModule):
                 f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
             )
             dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
-        
+
             self.log(
                 f"{prefix}_MSE",
                 dict_metrics[f"avg_{prefix}_mse"],
@@ -320,7 +325,7 @@ class BaseRationalizer(pl.LightningModule):
             )
 
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
-        
+
         self.log(
             f"avg_{prefix}_sum_loss",
             dict_metrics[f"avg_{prefix}_sum_loss"],

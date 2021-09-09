@@ -84,7 +84,7 @@ class HANSDataModule(BaseDataModule):
         x2 = collated_samples["hypothesis"]
         x1 = collated_samples["premise"]
 
-        # return batch to the data loader   
+        # return batch to the data loader
         batch = {
             "x1_ids": x1_ids,
             "x2_ids": x2_ids,
@@ -129,22 +129,30 @@ class HANSDataModule(BaseDataModule):
         # TRAIN MLNI; VALIDATION: MNLI; TEST: HANS
         if self.version == "vanilla":
             self.hans_dataset["train"] = self.multinli_dataset["train"]
-            self.hans_dataset["validation"] = self.multinli_dataset["validation_matched"]
+            self.hans_dataset["validation"] = self.multinli_dataset[
+                "validation_matched"
+            ]
         else:
-        # TRAIN MLNI + 30 000 SAMPLES HANS; VALIDATION: MNLI; TEST: HANS
-            concat_data_train = hf_datasets.concatenate_datasets([self.hans_dataset["train"].flatten_indices(), self.multinli_dataset["train"].flatten_indices()])
+            # TRAIN MLNI + 30 000 SAMPLES HANS; VALIDATION: MNLI; TEST: HANS
+            concat_data_train = hf_datasets.concatenate_datasets(
+                [
+                    self.hans_dataset["train"].flatten_indices(),
+                    self.multinli_dataset["train"].flatten_indices(),
+                ]
+            )
             self.hans_dataset["train"] = concat_data_train
-            self.hans_dataset["validation"] = self.multinli_dataset["validation_matched"]
+            self.hans_dataset["validation"] = self.multinli_dataset[
+                "validation_matched"
+            ]
 
         # change multinli labels to match hans labels
         def _collapselabels(example: dict):
             if example["label"] == 2:
                 example["label"] = 1
             return example
-        
 
         self.dataset = self.hans_dataset.map(_collapselabels)
-        
+
         # build tokenize rand label encoder
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
@@ -163,7 +171,7 @@ class HANSDataModule(BaseDataModule):
             return example
 
         self.dataset = self.dataset.map(_encode)
-        
+
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",

@@ -49,4 +49,3 @@ def run(args):
     shell_logger.info("Testing...")
     # load the best checkpoint automatically
     trainer.test(datamodule=dm, verbose=True)
-

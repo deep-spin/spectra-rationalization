@@ -48,4 +48,3 @@ class LSTMEncoder(nn.Module):
         else:  # classify from final state
             final = hx[-1]
         return outputs, final
-

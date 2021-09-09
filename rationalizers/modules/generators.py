@@ -79,8 +79,8 @@ class SPECTRAGenerator(nn.Module):
                 ),
                 dim=-1,
             )
-            x[lengths[k]:, 0] = -1e12
-            
+            x[lengths[k] :, 0] = -1e12
+
             # Set transition scores for valid positions
             transition_scores = torch.tensor(t[k], device=scores.device)
             transition = torch.zeros(
@@ -90,7 +90,7 @@ class SPECTRAGenerator(nn.Module):
                 transition_scores[: lengths[k] + 1] / self.temperature
             )
 
-            # H:SeqBudget consists of a single factor so, in this particular case, the LP-SparseMAP solution is 
+            # H:SeqBudget consists of a single factor so, in this particular case, the LP-SparseMAP solution is
             # indeed the SparseMAP solution and it can be found within a single iteration.
             self.max_iter = 1
             self.step_size = 0.0
@@ -116,8 +116,6 @@ class SPECTRAGenerator(nn.Module):
                     max_iter=self.max_iter,
                     step_size=self.step_size,
                 )
-
-                
 
             z_probs.cuda()
             z.append(z_probs)
@@ -243,13 +241,14 @@ class BernoulliIndependentGenerator(nn.Module):
                 z = (z_dist.probs >= 0.5).float()  # [B, T, 1]
             z = z.squeeze(-1)  # [B, T, 1]  -> [B, T]
 
-        z = torch.where(mask, z, z.new_zeros([1]))  
+        z = torch.where(mask, z, z.new_zeros([1]))
         z = z.view(emb.shape[0], -1)
 
         self.z = z
         self.z_dists = [z_dist]
 
         return z
+
 
 class SparsemaxGenerator(nn.Module):
     """
@@ -296,8 +295,6 @@ class SparsemaxGenerator(nn.Module):
         return z
 
 
-
-
 class KumaIndependentLatentModel(nn.Module):
     """
     The latent model ("The Generator") takes an input text
@@ -330,7 +327,7 @@ class KumaIndependentLatentModel(nn.Module):
         self.enc_layer = build_sentence_encoder(layer, emb_size, hidden_size)
 
         self.z_layer = KumaGate(enc_size)
-    
+
         self.z = None  # z samples
         self.z_dists = []  # z distribution(s)
 
@@ -342,7 +339,7 @@ class KumaIndependentLatentModel(nn.Module):
         emb = self.embed_layer(x)  # [B, T, E]
         h, _ = self.enc_layer(emb, mask, lengths)
 
-        z_dist = self.z_layer(h/0.01)
+        z_dist = self.z_layer(h / 0.01)
 
         # we sample once since the state was already repeated num_samples
         if self.training:
@@ -350,7 +347,7 @@ class KumaIndependentLatentModel(nn.Module):
                 z = z_dist.rsample()  # use rsample() if it's there
             else:
                 z = z_dist.sample()  # [B, M, 1]
-        else:   
+        else:
             z = []
             z_probs_batch = z_dist.mean()
 
@@ -398,9 +395,11 @@ class KumaIndependentLatentModel(nn.Module):
                 p1 = z_dist.pdf(h.new_ones(()))
                 pc = 1.0 - p0 - p1  # prob. of sampling a continuous value [B, M]
                 zero_one = torch.where(p0 > p1, h.new_zeros([1]), h.new_ones([1]))
-                z_sel = torch.where((pc > p0) & (pc > p1), z_dist.mean(), zero_one)  # [B, M]
+                z_sel = torch.where(
+                    (pc > p0) & (pc > p1), z_dist.mean(), zero_one
+                )  # [B, M]
                 z = z_sel.squeeze(-1)
-            
+
         # mask invalid positions
         z = z.squeeze(-1)
         z = torch.where(mask, z, z.new_zeros([1]))

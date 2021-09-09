@@ -19,7 +19,8 @@ shell_logger = logging.getLogger(__name__)
 
 
 class VanillaClassifier(BaseRationalizer):
-    """Rationalizer for which a generator does not exist. It just feeds the entire text to the predictor -- full-text baselines."""
+    """Rationalizer for which a generator does not exist.
+    It just feeds the entire text to the predictor -- full-text baselines."""
 
     def __init__(
         self,
@@ -118,11 +119,11 @@ class VanillaClassifier(BaseRationalizer):
             dropout=self.dropout,
             layer=self.sentence_encoder_layer_type,
             nonlinearity=nonlinearity_str,
-        )   
+        )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights()
-    
+
     def forward(
         self, x: torch.LongTensor, current_epoch=None, mask: torch.BoolTensor = None
     ):

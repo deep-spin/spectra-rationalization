@@ -12,14 +12,15 @@ from rationalizers.modules.sparsemap import (
     matching_smap_atmostone_budget,
 )
 
+
 class LPSparseMAPFaithfulMatching(nn.Module):
     """
     ESIM model with SPECTRA strategies for extraction of the sparse alignment.
 
-    For faithful alignments (the only information about the premise that the model 
-    has to make a prediction comes from the alignment and its masking of the encoded 
+    For faithful alignments (the only information about the premise that the model
+    has to make a prediction comes from the alignment and its masking of the encoded
     representation), turn the `faithful` flag on.
-    
+
     """
 
     def __init__(
@@ -38,7 +39,7 @@ class LPSparseMAPFaithfulMatching(nn.Module):
     ):
         super().__init__()
 
-        self.faithful = faithful 
+        self.faithful = faithful
         self.matching_type = matching_type
         emb_size = embed.weight.shape[1]
         enc_size = 2 * hidden_size if bidirectional else hidden_size
@@ -54,13 +55,15 @@ class LPSparseMAPFaithfulMatching(nn.Module):
         self.budget = budget
 
         if self.faithful:
-            self.projection_x1 = nn.Sequential(nn.Linear(enc_size, hidden_size), nn.ReLU())
+            self.projection_x1 = nn.Sequential(
+                nn.Linear(enc_size, hidden_size), nn.ReLU()
+            )
             self.projection_x2 = nn.Sequential(
                 nn.Linear(enc_size + enc_size, hidden_size), nn.ReLU()
             )
         else:
             self.projection = nn.Sequential(
-            nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
+                nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
             )
 
         self.composition_lstm = build_sentence_encoder(
@@ -108,16 +111,20 @@ class LPSparseMAPFaithfulMatching(nn.Module):
                     z_probs = matching_smap_atmostone(scores, max_iter=10)  # [T,D]
                 else:
                     z_probs = torch.zeros(scores.shape, device=scores.device)
-                    z_probs_sparsemap = matching_smap_atmostone(scores[:lengths_x1[k], :lengths_x2[k]] / 1e-3, max_iter=1000)
-                    z_probs[:lengths_x1[k], :lengths_x2[k]] = z_probs_sparsemap
+                    z_probs_sparsemap = matching_smap_atmostone(
+                        scores[: lengths_x1[k], : lengths_x2[k]] / 1e-3, max_iter=1000
+                    )
+                    z_probs[: lengths_x1[k], : lengths_x2[k]] = z_probs_sparsemap
 
             if self.matching_type == "XOR-AtMostONE":
                 if self.training:
                     z_probs = matching_smap(scores, max_iter=10)  # [T,D]
                 else:
                     z_probs = torch.zeros(scores.shape, device=scores.device)
-                    z_probs_sparsemap = matching_smap(scores[:lengths_x1[k], :lengths_x2[k]] / 1e-3, max_iter=1000)
-                    z_probs[:lengths_x1[k], :lengths_x2[k]] = z_probs_sparsemap
+                    z_probs_sparsemap = matching_smap(
+                        scores[: lengths_x1[k], : lengths_x2[k]] / 1e-3, max_iter=1000
+                    )
+                    z_probs[: lengths_x1[k], : lengths_x2[k]] = z_probs_sparsemap
 
             if self.matching_type == "AtMostONE-Budget":
                 if self.training:
@@ -127,9 +134,11 @@ class LPSparseMAPFaithfulMatching(nn.Module):
                 else:
                     z_probs = torch.zeros(scores.shape, device=scores.device)
                     z_probs_sparsemap = matching_smap_atmostone_budget(
-                        scores[:lengths_x1[k], :lengths_x2[k]] / 1e-3, max_iter=1000, budget=self.budget
+                        scores[: lengths_x1[k], : lengths_x2[k]] / 1e-3,
+                        max_iter=1000,
+                        budget=self.budget,
                     )
-                    z_probs[:lengths_x1[k], :lengths_x2[k]] = z_probs_sparsemap
+                    z_probs[: lengths_x1[k], : lengths_x2[k]] = z_probs_sparsemap
 
             z_probs = z_probs * mask[1][k].unsqueeze(0)
             z_probs = z_probs * mask[0][k].unsqueeze(-1)
@@ -201,13 +210,15 @@ class GumbelFaithfulMatching(nn.Module):
         self.temperature = temperature
 
         if self.faithful:
-            self.projection_x1 = nn.Sequential(nn.Linear(enc_size, hidden_size), nn.ReLU())
+            self.projection_x1 = nn.Sequential(
+                nn.Linear(enc_size, hidden_size), nn.ReLU()
+            )
             self.projection_x2 = nn.Sequential(
                 nn.Linear(enc_size + enc_size, hidden_size), nn.ReLU()
             )
         else:
             self.projection = nn.Sequential(
-            nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
+                nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
             )
 
         self.composition_lstm = build_sentence_encoder(
@@ -247,11 +258,17 @@ class GumbelFaithfulMatching(nn.Module):
         h_alignments = torch.bmm(x1_h, x2_h.transpose(1, 2))
 
         if not self.training:
-            row_x1_probs = F.gumbel_softmax(h_alignments / 1e-6, tau = self.temperature, dim=1, hard=True)
-            column_x2_probs = F.gumbel_softmax(h_alignments / 1e-6, tau = self.temperature, dim=2, hard=True)
+            row_x1_probs = F.gumbel_softmax(
+                h_alignments / 1e-6, tau=self.temperature, dim=1, hard=True
+            )
+            column_x2_probs = F.gumbel_softmax(
+                h_alignments / 1e-6, tau=self.temperature, dim=2, hard=True
+            )
         else:
-            row_x1_probs = F.gumbel_softmax(h_alignments, tau = self.temperature, dim=1)
-            column_x2_probs = F.gumbel_softmax(h_alignments, tau = self.temperature, dim=2)
+            row_x1_probs = F.gumbel_softmax(h_alignments, tau=self.temperature, dim=1)
+            column_x2_probs = F.gumbel_softmax(
+                h_alignments, tau=self.temperature, dim=2
+            )
 
         x1_align = torch.matmul(row_x1_probs, x2_h)
         x2_align = torch.matmul(column_x2_probs.transpose(-2, -1), x1_h)
@@ -281,6 +298,7 @@ class GumbelFaithfulMatching(nn.Module):
         z = [row_x1_probs, column_x2_probs]
 
         return z, y_hat
+
 
 class ESIMFaithfulMatching(nn.Module):
     """
@@ -315,13 +333,15 @@ class ESIMFaithfulMatching(nn.Module):
         self.temperature = temperature
 
         if self.faithful:
-            self.projection_x1 = nn.Sequential(nn.Linear(enc_size, hidden_size), nn.ReLU())
+            self.projection_x1 = nn.Sequential(
+                nn.Linear(enc_size, hidden_size), nn.ReLU()
+            )
             self.projection_x2 = nn.Sequential(
                 nn.Linear(enc_size + enc_size, hidden_size), nn.ReLU()
             )
         else:
             self.projection = nn.Sequential(
-            nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
+                nn.Linear(4 * 2 * hidden_size, hidden_size), nn.ReLU()
             )
 
         self.composition_lstm = build_sentence_encoder(
@@ -386,5 +406,3 @@ class ESIMFaithfulMatching(nn.Module):
         z = [row_x1_probs, column_x2_probs]
 
         return z, y_hat
-
-      

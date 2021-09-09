@@ -107,6 +107,7 @@ def load_yaml_config(path: str):
         cfg = yaml.safe_load(ymlfile)
     return cfg
 
+
 def setup_wandb_logger(default_root_dir: str):
     """
     Function that sets the WanbLogger to be used.
@@ -154,6 +155,7 @@ def load_ckpt_config(ckpt_path: str):
     config_dict = load_hparams_from_tags_csv(csv_config_path)
     return config_dict
 
+
 def get_rationales(
     tokenizer: StaticTokenizerEncoder,
     input_ids: torch.LongTensor,
@@ -175,7 +177,7 @@ def get_rationales(
     selected_rationales = tokenizer.batch_decode(selected_ids, lengths)
 
     return selected_ids, selected_rationales
-   
+
 
 def get_z_stats(z=None, mask=None):
     """
@@ -236,6 +238,7 @@ def load_glove_embeddings(vocab: list, name: str, emb_size: int):
             embedding_weights[idx] = pretrained_embedding[token]
     return embedding_weights
 
+
 def unroll(list_of_lists, rec=False):
     """
     Unroll a list of lists
@@ -251,4 +254,3 @@ def unroll(list_of_lists, rec=False):
     if rec and isinstance(new_list[0], (np.ndarray, list, torch.Tensor)):
         return unroll(new_list, rec=rec)
     return new_list
-

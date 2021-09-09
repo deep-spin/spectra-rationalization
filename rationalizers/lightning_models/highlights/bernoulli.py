@@ -108,7 +108,7 @@ class BernoulliRationalizer(BaseRationalizer):
         )
         self.emb_layer.weight.requires_grad = self.emb_requires_grad
 
-        # create generator        
+        # create generator
         self.generator = BernoulliIndependentGenerator(
             embed=self.emb_layer,
             hidden_size=self.hidden_size,
@@ -164,7 +164,6 @@ class BernoulliRationalizer(BaseRationalizer):
         m = self.generator.z_dists[0]
         logp_z0 = m.log_prob(0.0).squeeze(2)  # [B,T], log P(z = 0 | x)
         logp_z1 = m.log_prob(1.0).squeeze(2)  # [B,T], log P(z = 1 | x)
-       
 
         # compute log p(z|x) for each case (z==0 and z==1) and mask
         logpz = torch.where(z == 0, logp_z0, logp_z1)
@@ -189,7 +188,9 @@ class BernoulliRationalizer(BaseRationalizer):
         cost_vec = loss_vec.detach() + zsum * sparsity_factor + zdiff * coherent_factor
 
         if self.baseline:
-            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)  # cost_vec is neg reward
+            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(
+                0
+            )  # cost_vec is neg reward
         else:
             cost_logpz = (cost_vec * logpz.sum(1)).mean(0)  # cost_vec is neg reward
         obj = cost_vec.mean()  # MSE with regularizers = neg reward
@@ -197,7 +198,9 @@ class BernoulliRationalizer(BaseRationalizer):
 
         if self.baseline:
             self.n_points += 1.0
-            self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
+            self.mean_baseline += (
+                cost_vec.detach().mean() - self.mean_baseline
+            ) / self.n_points
 
         # pred diff doesn't do anything if only 1 aspect being trained
         if not self.is_multilabel:
@@ -271,14 +274,6 @@ class BernoulliRationalizer(BaseRationalizer):
             on_step=False,
             on_epoch=False,
         )
-
-        # log directly to tensorboard using self.logger.experiment
-        # self.logger.experiment.add_scalar(
-        # "train_batch_number", batch_idx, self.global_step
-        # )
-        # for metric, val in loss_stats.items():
-        # self.logger.experiment.add_scalar(f"train_{metric}", val, self.global_step)
-
         # compute metrics for this step
         if not self.is_multilabel:
             y = (y >= 0.5).long()
@@ -384,7 +379,6 @@ class BernoulliRationalizer(BaseRationalizer):
             f"avg_{prefix}_p1": np.mean(stacked_outputs[f"{prefix}_p1"]),
         }
 
-
         shell_logger.info(
             f"Avg {prefix} sum loss: {avg_outputs[f'avg_{prefix}_sum_loss']:.4}"
         )
@@ -404,7 +398,7 @@ class BernoulliRationalizer(BaseRationalizer):
                 f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
             )
             dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
-            
+
             self.log(
                 f"{prefix}_MSE",
                 dict_metrics[f"avg_{prefix}_mse"],

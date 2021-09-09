@@ -2,11 +2,12 @@
 
 import torch
 import torch.nn as nn
-from torch.distributions.bernoulli import Bernoulli 
+from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.relaxed_bernoulli import RelaxedBernoulli
 from torch.nn import Linear, Sequential, Softplus
 
 from rationalizers.modules.kuma import Kuma, HardKuma
+
 
 class BernoulliGate(nn.Module):
     """
@@ -52,15 +53,20 @@ class RelaxedBernoulliGate(nn.Module):
         logits = self.layer(x)  # [B, T, 1]
         logits = logits.squeeze(-1) * mask
         logits = logits.unsqueeze(-1)
-        dist = RelaxedBernoulli(temperature=torch.tensor([0.1], device=logits.device), logits=logits)
+        dist = RelaxedBernoulli(
+            temperature=torch.tensor([0.1], device=logits.device), logits=logits
+        )
         return dist
+
 
 class KumaGate(nn.Module):
     """
     Computes a _Hard_ Kumaraswamy Gate
     """
 
-    def __init__(self, in_features, out_features=1, support=(-0.1, 1.1), dist_type="hardkuma"):
+    def __init__(
+        self, in_features, out_features=1, support=(-0.1, 1.1), dist_type="hardkuma"
+    ):
         super(KumaGate, self).__init__()
 
         self.dist_type = dist_type

@@ -11,7 +11,7 @@ from rationalizers.lightning_models.highlights.base import BaseRationalizer
 from rationalizers.modules.generators import BernoulliIndependentGenerator
 from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.predictors import SentimentPredictor
-from rationalizers.utils import get_z_stats
+from rationalizers.utils import get_z_stats, get_rationales
 
 shell_logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
             dropout=self.dropout,
             layer=self.sentence_encoder_layer_type,
             nonlinearity=nonlinearity_str,
-        )   
+        )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights()
@@ -143,7 +143,7 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
             `loss stats (dict): dict with loss statistics
         """
         stats = {}
-        
+
         loss_vec = self.criterion(y_hat, y)  # [B] or [B,C]
 
         # main MSE loss for p(y | x,z)
@@ -174,7 +174,7 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
 
         sparsity_cost = zsum_cost + zdiff_cost
         stats["sparsity_cost"] = sparsity_cost.item()
-        
+
         loss += zsum_cost + zdiff_cost
 
         stats["obj"] = loss.item()
@@ -236,14 +236,14 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
             on_step=False,
             on_epoch=False,
         )
-        
-        # log directly to tensorboard using self.logger.experiment
-        # self.logger.experiment.add_scalar(
-        # "train_batch_number", batch_idx, self.global_step
-        # )
-        # for metric, val in loss_stats.items():
-        # self.logger.experiment.add_scalar(f"train_{metric}", val, self.global_step)
-
+        self.log(
+            "train_obj_loss",
+            loss_stats["obj"],
+            prog_bar=True,
+            logger=False,
+            on_step=False,
+            on_epoch=False,
+        )
         # compute metrics for this step
         if not self.is_multilabel:
             y = (y >= 0.5).long()
@@ -282,22 +282,14 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
             on_epoch=True,
         )
 
-
-        # manual logging
-        # for metric, val in loss_stats.items():
-        #     self.logger.experiment.add_scalar(
-        #         f"{prefix}_{metric}", val, self.eval_global_step[prefix]
-        #     )
+        # compute metrics for this step
+        if not self.is_multilabel:
+            y = (y >= 0.5).long()
 
         # log rationales
         ids_rationales, rationales = get_rationales(
             self.tokenizer, input_ids, z, batch["lengths"]
         )
-        # self.logger.experiment.add_text(f"{prefix}_rationales", rationales[0])
-
-        # compute metrics for this step
-        if not self.is_multilabel:
-            y = (y >= 0.5).long()
 
         # output to be stacked across iterations
         output = {
@@ -364,7 +356,7 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
                 f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
             )
             dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
-            
+
             self.log(
                 f"{prefix}_MSE",
                 dict_metrics[f"avg_{prefix}_mse"],
@@ -374,22 +366,7 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
                 on_epoch=True,
             )
 
-
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
-
-        # only save rationales for the validation set
-        if self.hparams.save_rationales and prefix == "val":
-            # select 10 random rationales
-            tokens, rationales, labels = select_random_samples(
-                stacked_outputs,
-                keys=["val_tokens", "val_rationales", "val_labels"],
-                randomize=False,
-                n=10,
-            )
-
-            # save dict to a timestamped csv
-            data = {"tokens": tokens, "rationales": rationales, "label": labels}
-            save_dict_as_timestamped_csv(self.hparams.default_root_dir, data)
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
@@ -490,5 +467,5 @@ class RelaxedBernoulliRationalizer(BaseRationalizer):
             output = {
                 f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
                 f"avg_{prefix}_p1": dict_metrics[f"avg_{prefix}_p1"],
-                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"]
+                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
             }

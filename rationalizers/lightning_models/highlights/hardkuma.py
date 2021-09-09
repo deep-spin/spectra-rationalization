@@ -8,9 +8,7 @@ from torchnlp.encoders.text import StaticTokenizerEncoder
 from rationalizers import constants
 from rationalizers.builders import build_embedding_weights
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
-from rationalizers.modules.generators import (
-    KumaIndependentLatentModel
-)
+from rationalizers.modules.generators import KumaIndependentLatentModel
 from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.predictors import SentimentPredictor
 from rationalizers.utils import get_z_stats, get_rationales
@@ -52,7 +50,7 @@ class HardKumaRationalizer(BaseRationalizer):
         self.contiguous = h_params.get("contiguous", False)
         self.topk = h_params.get("topk", False)
         self.relaxed = h_params.get("relaxed", False)
-        self.selection = h_params.get("budget", 10)/100
+        self.selection = h_params.get("budget", 10) / 100
         self.lasso = h_params.get("lasso", 0)
         self.budget = self.selection
 
@@ -68,12 +66,11 @@ class HardKumaRationalizer(BaseRationalizer):
         self.lambda_min = h_params.get("lambda_min", 1e-6)
         self.lambda_max = h_params.get("lambda_max", 1)
 
-
         # lagrange buffers
-        self.register_buffer('lambda0', torch.full((1,), self.lambda_init))
-        self.register_buffer('lambda1', torch.full((1,), self.lambda_init))
-        self.register_buffer('c0_ma', torch.full((1,), 0.))  # moving average
-        self.register_buffer('c1_ma', torch.full((1,), 0.))  # moving average
+        self.register_buffer("lambda0", torch.full((1,), self.lambda_init))
+        self.register_buffer("lambda1", torch.full((1,), self.lambda_init))
+        self.register_buffer("c0_ma", torch.full((1,), 0.0))  # moving average
+        self.register_buffer("c1_ma", torch.full((1,), 0.0))  # moving average
 
         if self.baseline:
             self.mean_baseline = 0
@@ -146,7 +143,7 @@ class HardKumaRationalizer(BaseRationalizer):
             dropout=self.dropout,
             layer=self.sentence_encoder_layer_type,
             nonlinearity=nonlinearity_str,
-        )   
+        )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights()
@@ -161,7 +158,7 @@ class HardKumaRationalizer(BaseRationalizer):
             `loss stats (dict): dict with loss statistics
         """
         stats = {}
-        
+
         loss_vec = self.criterion(y_hat, y)  # [B] or [B,C]
 
         # main MSE loss for p(y | x,z)
@@ -178,18 +175,18 @@ class HardKumaRationalizer(BaseRationalizer):
         # pre-compute for regularizers: pdf(0.)
         z_dists = self.generator.z_dists
         if len(z_dists) == 1:
-            pdf0 = z_dists[0].pdf(0.)
+            pdf0 = z_dists[0].pdf(0.0)
         else:
             pdf0 = []
             for t in range(len(z_dists)):
-                pdf_t = z_dists[t].pdf(0.)
+                pdf_t = z_dists[t].pdf(0.0)
                 pdf0.append(pdf_t)
             pdf0 = torch.stack(pdf0, dim=1)  # [B, T, 1]
 
         pdf0 = pdf0.squeeze(-1)
         pdf0 = torch.where(mask, pdf0, pdf0.new_zeros([1]))  # [B, T]
 
-        pdf_nonzero = 1. - pdf0  # [B, T]
+        pdf_nonzero = 1.0 - pdf0  # [B, T]
         pdf_nonzero = torch.where(mask, pdf_nonzero, pdf_nonzero.new_zeros([1]))
 
         l0 = pdf_nonzero.sum(1) / (lengths + 1e-9)  # [B]
@@ -202,10 +199,10 @@ class HardKumaRationalizer(BaseRationalizer):
         # than `self.selection` (the target sparsity rate)
 
         # lagrange dissatisfaction, batch average of the constraint
-        c0_hat = (l0 - self.selection)
+        c0_hat = l0 - self.selection
 
         # moving average of the constraint
-        self.c0_ma = self.alpha * self.c0_ma + (1-self.alpha) * c0_hat.item()
+        self.c0_ma = self.alpha * self.c0_ma + (1 - self.alpha) * c0_hat.item()
 
         # compute smoothed constraint (equals moving average c0_ma)
         c0 = c0_hat + (self.c0_ma.detach() - c0_hat.detach())
@@ -223,7 +220,6 @@ class HardKumaRationalizer(BaseRationalizer):
             stats["lagrangian0"] = (self.lambda0 * c0_hat).item()
             stats["a"] = z_dists[0].a.mean().item()
             stats["b"] = z_dists[0].b.mean().item()
-
 
         loss = loss + self.lambda0.detach() * c0
 
@@ -247,11 +243,10 @@ class HardKumaRationalizer(BaseRationalizer):
         target1 = self.lasso
 
         # lagrange dissatisfaction, batch average of the constraint
-        c1_hat = (lasso_cost - target1)
+        c1_hat = lasso_cost - target1
 
         # update moving average
-        self.c1_ma = self.alpha * self.c1_ma + \
-            (1 - self.alpha) * c1_hat.detach()
+        self.c1_ma = self.alpha * self.c1_ma + (1 - self.alpha) * c1_hat.detach()
 
         # compute smoothed constraint
         c1 = c1_hat + (self.c1_ma.detach() - c1_hat.detach())
@@ -275,7 +270,7 @@ class HardKumaRationalizer(BaseRationalizer):
         stats["p0"] = num_0 / float(total)
         stats["pc"] = num_c / float(total)
         stats["p1"] = num_1 / float(total)
-        stats["p1"] = stats["pc"] + stats["p1"] 
+        stats["p1"] = stats["pc"] + stats["p1"]
 
         stats["main_loss"] = loss.item()
         return loss, stats
@@ -432,7 +427,7 @@ class HardKumaRationalizer(BaseRationalizer):
                 f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
             )
             dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
-            
+
             self.log(
                 f"{prefix}_MSE",
                 dict_metrics[f"avg_{prefix}_mse"],
@@ -441,7 +436,6 @@ class HardKumaRationalizer(BaseRationalizer):
                 on_step=False,
                 on_epoch=True,
             )
-
 
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
 
@@ -544,5 +538,5 @@ class HardKumaRationalizer(BaseRationalizer):
             output = {
                 f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
                 f"avg_{prefix}_p1": dict_metrics[f"avg_{prefix}_p1"],
-                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"]
+                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
             }

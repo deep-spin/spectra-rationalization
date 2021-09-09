@@ -6,6 +6,7 @@ from rationalizers.builders import build_sentence_encoder
 
 """Copied from https://github.com/bastings/interpretable_predictions"""
 
+
 class SentimentPredictor(nn.Module):
     """
     The Encoder takes an input text (and rationale z) and computes p(y|x,z)

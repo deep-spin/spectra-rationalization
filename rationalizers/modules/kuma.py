@@ -154,7 +154,9 @@ class StretchedVariable(RelaxedBinary):
         :param support: a pair specifying the limits of the stretched support (e.g. [-1, 2])
             we use these values to compute location = pair[0] and scale = pair[1] - pair[0]
         """
-        assert isinstance(dist, RelaxedBinary), "I need a RelaxedBinary variable, got %s" % type(dist)
+        assert isinstance(
+            dist, RelaxedBinary
+        ), "I need a RelaxedBinary variable, got %s" % type(dist)
         assert support[0] < support[1], "I need an ordered support, got %s" % support
         self._dist = dist
         self.loc = support[0]
@@ -192,7 +194,7 @@ class StretchedVariable(RelaxedBinary):
 
         if isinstance(x, float):
             x = self.params()[0].new_tensor([x])
-        
+
         self.loc = self.loc.to(x.device)
         self.scale = self.scale.to(x.device)
 
@@ -247,7 +249,9 @@ class HardBinary(RV):
         cdf_1 = self._dist.cdf(x.new_ones(1))
 
         # first we fix log_pdf for 0s and 1s
-        log_p = torch.where(x == 0.0, log_cdf_0, torch.log(1.0 - cdf_1))  # log Q(0)  # log (1-Q(1))
+        log_p = torch.where(
+            x == 0.0, log_cdf_0, torch.log(1.0 - cdf_1)
+        )  # log Q(0)  # log (1-Q(1))
         # then for those that are in the open (0, 1)
         log_p = torch.where((0.0 < x) & (x < 1.0), self._dist.log_pdf(x), log_p)
         # see eq 26 of Louizos et al
@@ -263,7 +267,9 @@ class HardBinary(RV):
         if isinstance(x, float):
             x = self.params()[0].new_tensor([x])
 
-        log_c = torch.where(x < 1.0, self._dist.log_cdf(x), x.new_zeros(x.size()))  # all of the mass
+        log_c = torch.where(
+            x < 1.0, self._dist.log_cdf(x), x.new_zeros(x.size())
+        )  # all of the mass
         return log_c.clamp(math.log(EPS), math.log(1 - EPS))
 
 

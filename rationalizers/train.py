@@ -43,9 +43,13 @@ def run(args):
         )
         callbacks.append(early_stop_callback)
 
-        early_stopping = dict_args["early_stopping"] if "early_stopping" in dict_args.keys() else True
+        early_stopping = (
+            dict_args["early_stopping"]
+            if "early_stopping" in dict_args.keys()
+            else True
+        )
 
-        #Disregard Early Stopping and save the model from last epoch
+        # Disregard Early Stopping and save the model from last epoch
         if not early_stopping:
             checkpoint_callback = ModelCheckpoint(
                 dirpath=os.path.join(

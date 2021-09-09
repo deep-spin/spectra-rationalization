@@ -127,7 +127,7 @@ class BeerDataModule(BaseDataModule):
             aspect_subset=self.aspect_subset,
             download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
         )
-        
+
         # build tokenizer info (vocab + special tokens) based on train and validation set
         tok_samples = chain(
             self.dataset["train"]["tokens"], self.dataset["validation"]["tokens"]
