@@ -13,7 +13,7 @@ Official implementation of the **EMNLP 2021** paper **SPECTRA: Sparse Structured
 
 ## Resources
 
-- [Paper](https://arxiv.org/abs/2007.01919) (arXiv)
+- [Paper](https://arxiv.org/abs/2109.04552) (arXiv)
 
 All material is made available under the MIT license. You can **use, redistribute, and adapt** the material for **non-commercial purposes**, as long as you give appropriate credit by **citing our paper** and **indicating any changes** that you've made.
 
