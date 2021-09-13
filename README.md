@@ -72,7 +72,7 @@ python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra -
 
 ## Acknowledgments
 
-We want to thank Marcos Treviso for helping starting this codebase. We are also grateful to Jasmijn Bastings for the code in this repository was inspired by the structure and implementations in [Interpretable Predictions](https://github.com/bastings/interpretable_predictions).
+We want to thank Marcos Treviso for helping starting this codebase. We are also very grateful to Vlad Niculae for all the help he provided regarding the use of the LP-SparseMAP library. We also thank Jasmijn Bastings because the code in this repository was inspired by the structure and implementations in [Interpretable Predictions](https://github.com/bastings/interpretable_predictions).
 
 ---
 
