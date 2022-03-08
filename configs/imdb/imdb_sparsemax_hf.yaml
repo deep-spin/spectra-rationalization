@@ -31,8 +31,8 @@ train:
     dropout: 0.1
     explainer: 'attention'
     explainer_activation: 'sparsemax'
-    gen_arch: bert-base-cased
-    pred_arch: bert-base-cased
+    gen_arch: 'bert-base-cased'
+    pred_arch: 'bert-base-cased'
     gen_emb_requires_grad: False
     pred_emb_requires_grad: False
     shared_gen_pred: True
