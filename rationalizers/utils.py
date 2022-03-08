@@ -1,15 +1,11 @@
 import csv
-import gzip
 import logging
 import os
 import pickle
-import random
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 import yaml
 from pytorch_lightning import seed_everything
@@ -254,3 +250,13 @@ def unroll(list_of_lists, rec=False):
     if rec and isinstance(new_list[0], (np.ndarray, list, torch.Tensor)):
         return unroll(new_list, rec=rec)
     return new_list
+
+
+def freeze_module(module: torch.nn.Module):
+    for param in module.parameters():
+        param.requires_grad = False
+
+
+def unfreeze_module(module: torch.nn.Module):
+    for param in module.parameters():
+        param.requires_grad = True

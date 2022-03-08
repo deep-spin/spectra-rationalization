@@ -20,7 +20,7 @@ class BaseRationalizer(pl.LightningModule):
 
     def __init__(
         self,
-        tokenizer: StaticTokenizerEncoder,
+        tokenizer: object,
         nb_classes: int,
         is_multilabel: bool,
         h_params: dict,
@@ -65,7 +65,7 @@ class BaseRationalizer(pl.LightningModule):
         self.criterion = criterion_cls(reduction="none")
 
         # model arch:
-        self.vocab_size = tokenizer.vocab_size
+        self.vocab_size = tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else len(tokenizer)
         self.emb_type = h_params.get("emb_type", "random")
         self.emb_path = h_params.get("emb_path", None)
         self.emb_size = h_params.get("emb_size", 300)
