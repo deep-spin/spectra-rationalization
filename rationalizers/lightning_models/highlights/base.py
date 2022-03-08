@@ -6,6 +6,7 @@ import torch
 from torch.nn.init import _calculate_fan_in_and_fan_out
 from torchnlp.encoders.text import StaticTokenizerEncoder
 from torch import nn
+import torchmetrics
 
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
@@ -40,23 +41,23 @@ class BaseRationalizer(pl.LightningModule):
 
         # define metrics
         if self.is_multilabel:
-            self.train_accuracy = pl.metrics.Accuracy()
-            self.val_accuracy = pl.metrics.Accuracy()
-            self.test_accuracy = pl.metrics.Accuracy()
-            self.train_precision = pl.metrics.Precision(
+            self.train_accuracy = torchmetrics.Accuracy()
+            self.val_accuracy = torchmetrics.Accuracy()
+            self.test_accuracy = torchmetrics.Accuracy()
+            self.train_precision = torchmetrics.Precision(
                 num_classes=nb_classes, average="macro"
             )
-            self.val_precision = pl.metrics.Precision(
+            self.val_precision = torchmetrics.Precision(
                 num_classes=nb_classes, average="macro"
             )
-            self.test_precision = pl.metrics.Precision(
+            self.test_precision = torchmetrics.Precision(
                 num_classes=nb_classes, average="macro"
             )
-            self.train_recall = pl.metrics.Recall(
+            self.train_recall = torchmetrics.Recall(
                 num_classes=nb_classes, average="macro"
             )
-            self.val_recall = pl.metrics.Recall(num_classes=nb_classes, average="macro")
-            self.test_recall = pl.metrics.Recall(
+            self.val_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
+            self.test_recall = torchmetrics.Recall(
                 num_classes=nb_classes, average="macro"
             )
 

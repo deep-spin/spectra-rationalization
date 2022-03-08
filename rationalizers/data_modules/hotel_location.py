@@ -3,7 +3,7 @@ from itertools import chain
 
 import datasets as hf_datasets
 import torch
-from torchnlp.encoders.text import WhitespaceEncoder, stack_and_pad_tensors
+from torchnlp.encoders.text import WhitespaceEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
 
 from rationalizers import constants
@@ -25,6 +25,7 @@ class HotelLocationDataModule(BaseDataModule):
         self.batch_size = d_params.get("batch_size", 32)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
+        self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_multilabel = True
 
         # deal with single aspect experiments
@@ -69,8 +70,10 @@ class HotelLocationDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = stack_and_pad_tensors(
-            collated_samples["input_ids"], padding_index=self.tokenizer.padding_index
+            collated_samples["input_ids"], padding_index=constants.PAD_ID
         )
+        if self.max_seq_len != 99999999:
+            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
 
         # stack scores
         scores = collated_samples["scores"]
@@ -120,6 +123,8 @@ class HotelLocationDataModule(BaseDataModule):
             return example
 
         self.dataset = self.dataset.map(_encode)
+        self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch", columns=["input_ids", "scores"], output_all_columns=True

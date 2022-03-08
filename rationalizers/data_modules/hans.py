@@ -3,7 +3,7 @@ from itertools import chain
 import datasets as hf_datasets
 import nltk
 import torch
-from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors
+from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
 
 from rationalizers import constants
@@ -27,6 +27,7 @@ class HANSDataModule(BaseDataModule):
         self.batch_size = d_params.get("batch_size", 64)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
+        self.max_seq_len = d_params.get("max_seq_len", 99999999)
 
         # objects
         self.dataset = None
@@ -69,11 +70,14 @@ class HANSDataModule(BaseDataModule):
 
         # pad and stack input ids
         x1_ids, x1_lengths = stack_and_pad_tensors(
-            collated_samples["x1_ids"], padding_index=self.tokenizer.padding_index
+            collated_samples["x1_ids"], padding_index=constants.PAD_ID
         )
         x2_ids, x2_lengths = stack_and_pad_tensors(
-            collated_samples["x2_ids"], padding_index=self.tokenizer.padding_index
+            collated_samples["x2_ids"], padding_index=constants.PAD_ID
         )
+        if self.max_seq_len != 99999999:
+            x1_ids = pad_tensor(x1_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
+            x2_ids = pad_tensor(x2_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
 
         # stack labels
         labels = collated_samples["label"]

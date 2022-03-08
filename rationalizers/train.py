@@ -1,9 +1,11 @@
 import logging
 import os
+import constants
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from transformers import AutoTokenizer
+from constants import update_constants
 
 from rationalizers.data_modules import available_data_modules
 from rationalizers.lightning_models import available_models
@@ -19,12 +21,14 @@ def run(args):
     dict_args = vars(args)
 
     tokenizer = None
-    if args.hf_tokenizer is not None:
-        tokenizer = AutoTokenizer.from_pretrained(args.hf_tokenizer)
+    if args.tokenizer is not None:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        dict_args['max_length'] = tokenizer.model_max_length
+        update_constants(tokenizer)
 
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
-    dm = dm_cls(d_params=dict_args, toknizer=tokenizer)
+    dm = dm_cls(d_params=dict_args, tokenizer=tokenizer)
     dm.prepare_data()
     dm.setup()
 

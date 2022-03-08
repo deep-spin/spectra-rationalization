@@ -13,6 +13,7 @@ from pytorch_lightning.core.saving import load_hparams_from_tags_csv
 from pytorch_lightning.loggers import WandbLogger
 from torchnlp.encoders.text import StaticTokenizerEncoder
 from torchnlp.word_to_vector import GloVe
+from transformers import PreTrainedTokenizer
 
 from rationalizers import constants
 
@@ -114,7 +115,7 @@ def setup_wandb_logger(default_root_dir: str):
     return WandbLogger(
         project="SPECTRA",
         save_dir=default_root_dir,
-        version=str(id.fields[1]),
+        # version=str(id.fields[1]),
     )
 
 
@@ -153,7 +154,7 @@ def load_ckpt_config(ckpt_path: str):
 
 
 def get_rationales(
-    tokenizer: StaticTokenizerEncoder,
+    tokenizer: object,
     input_ids: torch.LongTensor,
     z: torch.FloatTensor,
     lengths: torch.LongTensor,
@@ -170,7 +171,11 @@ def get_rationales(
     """
     z = z.cuda()
     selected_ids = (z * input_ids).long()
-    selected_rationales = tokenizer.batch_decode(selected_ids, lengths)
+    if isinstance(tokenizer, StaticTokenizerEncoder):
+        selected_rationales = tokenizer.batch_decode(selected_ids, lengths)
+    else:
+        selected_rationales = tokenizer.batch_decode(selected_ids)
+        selected_rationales = [s[:l] for s, l in zip(selected_rationales, lengths.tolist())]
 
     return selected_ids, selected_rationales
 
@@ -260,3 +265,10 @@ def freeze_module(module: torch.nn.Module):
 def unfreeze_module(module: torch.nn.Module):
     for param in module.parameters():
         param.requires_grad = True
+
+
+def masked_average(tensor, mask):
+    """ Performs masked average of a given tensor at time dim. """
+    tensor_sum = (tensor * mask.float().unsqueeze(-1)).sum(1)
+    tensor_mean = tensor_sum / mask.sum(-1).float().unsqueeze(-1)
+    return tensor_mean

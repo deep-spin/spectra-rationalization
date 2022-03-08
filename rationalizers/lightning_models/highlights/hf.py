@@ -6,7 +6,8 @@ from transformers import AutoModel
 
 from rationalizers.explainers import available_explainers
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
-from rationalizers.utils import get_z_stats, freeze_module
+from rationalizers.modules.scalar_mix import ScalarMixWithDropout
+from rationalizers.utils import get_z_stats, freeze_module, masked_average
 
 shell_logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class HFRationalizer(BaseRationalizer):
         self.gen_hidden_size = self.gen_hf.config.hidden_size
 
         # predictor module
-        self.pred_hf = self.gen_bert if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
+        self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
         self.pred_emb_layer = self.pred_hf.embeddings
         self.pred_encoder = self.pred_hf.encoder
         self.pred_hidden_size = self.pred_hf.config.hidden_size
@@ -68,6 +69,13 @@ class HFRationalizer(BaseRationalizer):
             nn.Sigmoid() if not self.is_multilabel else nn.LogSoftmax(dim=-1),
         )
 
+        # useful for stabilizing training
+        # self.scalar_mix = ScalarMixWithDropout(
+        #     mixture_size=self.pred_hf.config.num_hidden_layers+1,
+        #     dropout=self.dropout,
+        #     do_layer_norm=True,
+        # )
+
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights()
 
@@ -81,10 +89,13 @@ class HFRationalizer(BaseRationalizer):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :return: the output from SentimentPredictor. Torch.Tensor of shape [B, C]
         """
-        x_mask = torch.ones_like(x) * self.mask_token_id
+        ext_mask = mask[:, None, None, :]  # add head and seq dimension
+        ext_mask = ext_mask.to(dtype=self.dtype)  # fp16 compatibility
+        ext_mask = (1.0 - ext_mask) * -10000.0  # will set softmax to zero
+        x_mask = torch.ones_like(x) * self.mask_token_id  # create an input with full mask tokens
 
         gen_e = self.gen_emb_layer(x)
-        gen_h = self.gen_encoder(gen_e, mask).last_hidden_state
+        gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
 
         z = self.explainer(gen_h, mask)
         z_mask = (z * mask.float()).unsqueeze(-1)
@@ -95,18 +106,20 @@ class HFRationalizer(BaseRationalizer):
         if self.selection_space == 'token':
             z_mask_bin = (z_mask > 0).float()
             pred_e = pred_e * z_mask_bin + pred_e_mask * (1 - z_mask_bin)
-            mask = z_mask.squeeze(-1) > 0.0  # z could be continuous
+            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
 
         elif self.selection_space == 'embedding':
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
 
         else:
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-            mask = z_mask.squeeze(-1) > 0.0  # z could be continuous
+            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
 
-        pred_h = self.pred_encoder(pred_e, mask).last_hidden_state
+        pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
 
-        y_hat = self.output_layer(pred_h)
+        summary = masked_average(pred_h, mask)
+        y_hat = self.output_layer(summary)
+
         return z, y_hat
 
     def get_loss(self, y_hat, y, prefix, mask=None):

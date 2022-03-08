@@ -4,6 +4,7 @@ import os
 from pytorch_lightning import Trainer
 from transformers import AutoTokenizer
 
+from rationalizers.constants import update_constants
 from rationalizers.data_modules import available_data_modules
 from rationalizers.lightning_models import available_models
 
@@ -14,8 +15,9 @@ def run(args):
     dict_args = vars(args)
 
     tokenizer = None
-    if args.hf_tokenizer is not None:
-        tokenizer = AutoTokenizer.from_pretrained(args.hf_tokenizer)
+    if args.tokenizer is not None:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        update_constants(tokenizer)
 
     # /a/b/c.ext to a/b/
     checkpoint_dir = os.path.dirname(args.ckpt)
