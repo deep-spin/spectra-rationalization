@@ -3,6 +3,7 @@ import os
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from transformers import AutoTokenizer
 
 from rationalizers.data_modules import available_data_modules
 from rationalizers.lightning_models import available_models
@@ -16,9 +17,14 @@ shell_logger = logging.getLogger(__name__)
 
 def run(args):
     dict_args = vars(args)
+
+    tokenizer = None
+    if args.hf_tokenizer is not None:
+        tokenizer = AutoTokenizer.from_pretrained(args.hf_tokenizer)
+
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
-    dm = dm_cls(d_params=dict_args)
+    dm = dm_cls(d_params=dict_args, toknizer=tokenizer)
     dm.prepare_data()
     dm.setup()
 

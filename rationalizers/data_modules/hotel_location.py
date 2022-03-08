@@ -13,7 +13,7 @@ from rationalizers.data_modules.base import BaseDataModule
 class HotelLocationDataModule(BaseDataModule):
     """DataModule for Hotel Location Dataset."""
 
-    def __init__(self, d_params: dict):
+    def __init__(self, d_params: dict, tokenizer: object = None):
         """
         :param d_params: hyperparams dict. See docs for more info.
         """
@@ -32,7 +32,7 @@ class HotelLocationDataModule(BaseDataModule):
 
         # objects
         self.dataset = None
-        self.tokenizer = None
+        self.tokenizer = tokenizer
         self.tokenizer_cls = partial(
             WhitespaceEncoder,  # Beer dataset was already tokenized by Lei et al.
             min_occurrences=self.vocab_min_occurrences,
@@ -107,11 +107,12 @@ class HotelLocationDataModule(BaseDataModule):
             download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
         )
 
-        # build tokenizer info (vocab + special tokens) based on train and validation set
-        tok_samples = chain(
-            self.dataset["train"]["tokens"], self.dataset["validation"]["tokens"]
-        )
-        self.tokenizer = self.tokenizer_cls(tok_samples)
+        if self.tokenizer is None:
+            # build tokenizer info (vocab + special tokens) based on train and validation set
+            tok_samples = chain(
+                self.dataset["train"]["tokens"], self.dataset["validation"]["tokens"]
+            )
+            self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
         def _encode(example: dict):

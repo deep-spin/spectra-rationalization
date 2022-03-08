@@ -13,7 +13,7 @@ from rationalizers.data_modules.base import BaseDataModule
 class ImdbDataModule(BaseDataModule):
     """DataModule for IMDB Dataset."""
 
-    def __init__(self, d_params: dict):
+    def __init__(self, d_params: dict, tokenizer: object = None):
         """
         :param d_params: hyperparams dict. See docs for more info.
         """
@@ -31,7 +31,7 @@ class ImdbDataModule(BaseDataModule):
         # objects
         self.dataset = None
         self.label_encoder = None  # no label encoder for this dataset
-        self.tokenizer = None
+        self.tokenizer = tokenizer
         self.tokenizer_cls = partial(
             # WhitespaceEncoder,
             # TreebankEncoder,

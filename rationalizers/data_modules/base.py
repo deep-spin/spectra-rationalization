@@ -9,7 +9,7 @@ from rationalizers.utils import load_object, save_object
 class BaseDataModule(pl.LightningDataModule):
     """Base DataModule for all data modules."""
 
-    def __init__(self, d_params: dict):
+    def __init__(self, d_params: dict, tokenizer: object = None):
         """
         :param d_params: hyperparams dict.
         """
@@ -20,7 +20,7 @@ class BaseDataModule(pl.LightningDataModule):
         # base objects
         self.dataset = None
         self.label_encoder = None
-        self.tokenizer = None
+        self.tokenizer = tokenizer
 
     def load_encoders(self, root_dir, load_tokenizer, load_label_encoder):
         if load_tokenizer:

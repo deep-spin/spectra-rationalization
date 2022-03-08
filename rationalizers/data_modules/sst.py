@@ -14,7 +14,7 @@ from rationalizers.data_modules.base import BaseDataModule
 class SSTDataModule(BaseDataModule):
     """DataModule for Stanford Sentiment Treebank Dataset."""
 
-    def __init__(self, d_params: dict):
+    def __init__(self, d_params: dict, tokenizer: object = None):
         """
         :param d_params: hyperparams dict. See docs for more info.
         """
@@ -41,7 +41,7 @@ class SSTDataModule(BaseDataModule):
         self.label_encoder_cls = partial(
             LabelEncoder, reserved_labels=[]
         )  # no unknown & pad symbols for labels
-        self.tokenizer = None
+        self.tokenizer = tokenizer
         self.tokenizer_cls = partial(
             WhitespaceEncoder,  # SST dataset is already tokenized by default
             min_occurrences=self.vocab_min_occurrences,
