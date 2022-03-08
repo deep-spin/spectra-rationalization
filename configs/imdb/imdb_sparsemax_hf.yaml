@@ -29,6 +29,7 @@ train:
     model: 'hf'
     temperature: 1.0
     dropout: 0.1
+    explainer: 'attention'
     explainer_activation: 'sparsemax'
     gen_arch: bert-base-cased
     pred_arch: bert-base-cased
