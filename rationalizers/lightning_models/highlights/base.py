@@ -364,7 +364,7 @@ class BaseRationalizer(pl.LightningModule):
             # output["monitor"] = self.criterion  # not sure we need this
         return output
 
-    def init_weights(self):
+    def init_weights(self, module=None):
         """
         Model initialization.
         """
@@ -386,8 +386,8 @@ class BaseRationalizer(pl.LightningModule):
                 std = gain * math.sqrt(2.0 / (fan_in + fan_out))
                 a = math.sqrt(3.0) * std
                 torch.nn.init.uniform_(w, -a, a)
-
-        for name, p in self.named_parameters():
+        named_params = module.named_parameters() if module is not None else self.named_parameters()
+        for name, p in named_params:
             if name.startswith("emb") or "lagrange" in name:
                 print("{:10s} {:20s} {}".format("unchanged", name, p.shape))
             elif "lstm" in name and len(p.shape) > 1:

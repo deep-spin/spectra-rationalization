@@ -86,7 +86,8 @@ class HFRationalizer(BaseRationalizer):
         # )
 
         # initialize params using xavier initialization for weights and zero for biases
-        self.init_weights()
+        self.init_weights(self.explainer)
+        self.init_weights(self.output_layer)
 
     def forward(
         self, x: torch.LongTensor, current_epoch=None, mask: torch.BoolTensor = None
