@@ -32,8 +32,10 @@ class HFRationalizer(BaseRationalizer):
 
         self.gen_arch = h_params.get("gen_arch", "bert-base-multilingual-cased")
         self.pred_arch = h_params.get("pred_arch", "bert-base-multilingual-cased")
-        self.gen_emb_requires_grad = h_params.get("gen_emb_requires_grad", False)
-        self.pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", False)
+        self.gen_emb_requires_grad = h_params.get("gen_emb_requires_grad", True)
+        self.pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", True)
+        self.gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
+        self.pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)
         self.shared_gen_pred = h_params.get("shared_gen_pred", False)
         self.dropout = h_params.get("dropout", 0.1)
         self.temperature = h_params.get("temperature", 1.0)
@@ -61,9 +63,16 @@ class HFRationalizer(BaseRationalizer):
             freeze_module(self.gen_emb_layer)
         if not self.pred_emb_requires_grad:
             freeze_module(self.pred_emb_layer)
+        # freeze models
+        if not self.gen_encoder_requires_grad:
+            freeze_module(self.gen_encoder)
+        if not self.pred_encoder_requires_grad:
+            freeze_module(self.pred_encoder)
 
         # define output layer
         self.output_layer = nn.Sequential(
+            nn.Linear(self.pred_hidden_size, self.pred_hidden_size),
+            nn.Tanh(),
             nn.Dropout(self.dropout),
             nn.Linear(self.pred_hidden_size, nb_classes),
             nn.Sigmoid() if not self.is_multilabel else nn.LogSoftmax(dim=-1),
