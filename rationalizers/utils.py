@@ -114,6 +114,7 @@ def setup_wandb_logger(default_root_dir: str):
     id = uuid.uuid4()
     return WandbLogger(
         project="SPECTRA",
+        entity="deepspin-cf-rationalizers",
         save_dir=default_root_dir,
         # version=str(id.fields[1]),
     )
