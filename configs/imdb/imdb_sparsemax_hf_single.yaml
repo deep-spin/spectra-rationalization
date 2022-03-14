@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/imdb-sparsemax-hf/'  # path to save logs and models
+default_root_dir: 'experiments/imdb-sparsemax-hf-single/'  # path to save logs and models
 
 
 # training args
@@ -8,8 +8,8 @@ train:
 
     # io
     save_rationales: True       # rationales will be saved in a .csv in the default_root_dir as `rationales-{timestamp}.csv`
-    save_tokenizer: False       # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
-    save_label_encoder: True    # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
+    save_tokenizer: False       # the tokenizer will be pickled and stored in the checkpoint dir as `tokenizer.pickle`
+    save_label_encoder: True    # the label encoder will be pickled and stored in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
@@ -27,13 +27,13 @@ train:
     # pytorch-lightning rationalizer model
     # bert-base-multilingual-cased
     tokenizer: 'bert-base-cased'
-    model: 'hf'
+    model: 'hf_single'
     temperature: 1.0
     dropout: 0.1
     gen_arch: 'bert-base-cased'   # distilbert-base-cased
     pred_arch: 'bert-base-cased'  # distilbert-base-cased
-    gen_emb_requires_grad: False
-    pred_emb_requires_grad: False
+    gen_emb_requires_grad: True
+    pred_emb_requires_grad: True
     shared_gen_pred: True
     explainer: 'attention'
     explainer_activation: 'sparsemax'
