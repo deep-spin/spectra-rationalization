@@ -6,7 +6,7 @@ pandas==1.1.4
 datasets==1.1.2
 entmax==1.0
 tqdm==4.49.0
-numpy==1.19.4
+numpy==1.21.0
 ipdb==0.13.4
 PyYAML==5.4.0
 Cython==0.29.21
