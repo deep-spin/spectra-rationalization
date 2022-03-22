@@ -1,5 +1,7 @@
 import logging
 import math
+import os
+
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -12,7 +14,7 @@ import torchmetrics
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.modules.metrics import evaluate_rationale
-from rationalizers.utils import get_rationales, get_html_rationales, unroll
+from rationalizers.utils import get_rationales, get_html_rationales, unroll, save_rationales
 
 shell_logger = logging.getLogger(__name__)
 
@@ -261,6 +263,8 @@ class BaseRationalizer(pl.LightningModule):
         if prefix != 'test':
             shuffle(idxs)
             idxs = idxs[:10]
+        else:
+            idxs = idxs[:100]
         select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
         pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
@@ -270,6 +274,14 @@ class BaseRationalizer(pl.LightningModule):
         lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
         html_string = get_html_rationales(pieces, scores, gold, pred, lens)
         self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+
+        # save rationales
+        if self.hparams.save_rationales:
+            scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
+            lens = unroll(stacked_outputs[f"{prefix}_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+            shell_logger.info(f'Saving rationales in {filename}...')
+            save_rationales(filename, scores, lens)
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():

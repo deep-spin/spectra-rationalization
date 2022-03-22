@@ -296,3 +296,11 @@ def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels
     for t, s, gl, pl, l in zip(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
         html_texts.append(colorize_two_way(t, s, gl, pl, l))
     return '<br>'.join(html_texts)
+
+
+def save_rationales(filename, all_scores, all_lengths):
+    f = open(filename, 'w', encoding='utf8')
+    for scores, leng in zip(all_scores, all_lengths):
+        text = ' '.join(['{:.4f}'.format(z) for z in scores[:leng].tolist()])
+        f.write(text + '\n')
+    f.close()
