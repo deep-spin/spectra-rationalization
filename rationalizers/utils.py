@@ -277,9 +277,9 @@ def masked_average(tensor, mask):
 
 def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
     def colorize_two_way(tokens, scores, gold_l, pred_l, leng):
-        template_pos = '<span class="barcode"; style="color: black; background-color: rgba(0, 255, 0, {}); ' \
+        template_pos = '<span style="color: black; background-color: rgba(0, 255, 0, {}); ' \
                        'display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
-        template_neg = '<span class="barcode"; style="color: black; background-color: rgba(255, 0, 0, {}); ' \
+        template_neg = '<span style="color: black; background-color: rgba(255, 0, 0, {}); ' \
                        'display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
         text = ''
         f = lambda w: w.replace('<', 'ᐸ').replace('>', 'ᐳ')
@@ -288,7 +288,9 @@ def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels
                 text += template_pos.format(color, f(word))
             else:
                 text += template_neg.format(-color, f(word))
-        html_text = '<div style="width:100%">g: {} | p: {}:&nbsp;&nbsp; {}</div>'.format(gold_l, pred_l, text)
+        html_text = '<div style="width:100%">g: {} | p: {}:&nbsp;&nbsp; {}</div>'.format(
+            gold_l, pred_l, text
+        )
         return html_text
     html_texts = []
     for t, s, gl, pl, l in zip(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):

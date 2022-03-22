@@ -12,7 +12,7 @@ import torchmetrics
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.modules.metrics import evaluate_rationale
-from rationalizers.utils import get_rationales, get_html_rationales
+from rationalizers.utils import get_rationales, get_html_rationales, unroll
 
 shell_logger = logging.getLogger(__name__)
 
@@ -182,6 +182,7 @@ class BaseRationalizer(pl.LightningModule):
         ids_rationales, rationales = get_rationales(
             self.tokenizer, input_ids, z_1, batch["lengths"]
         )
+        pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
         self.log(
             f"{prefix}_sum_loss",
@@ -198,8 +199,9 @@ class BaseRationalizer(pl.LightningModule):
             f"{prefix}_ps": loss_stats[prefix + "_ps"],
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
+            f"{prefix}_pieces": pieces,
             f"{prefix}_tokens": batch["tokens"],
-            f"{prefix}z": z,
+            f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": batch["labels"].tolist(),
             f"{prefix}_lengths": batch["lengths"].tolist(),
@@ -255,18 +257,19 @@ class BaseRationalizer(pl.LightningModule):
 
         # log rationales
         from random import shuffle
-        idxs = list(range(len(stacked_outputs["test_tokens"])))
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
         if prefix != 'test':
             shuffle(idxs)
             idxs = idxs[:10]
-        sel = lambda v: [v[i] for i in idxs]
-        tokens = sel(stacked_outputs[f"{prefix}_tokens"].tolist())
-        scores = sel(stacked_outputs[f"{prefix}_z"].tolist())
-        gold = sel(stacked_outputs[f"{prefix}_labels"])
-        pred = sel(stacked_outputs[f"{prefix}_predictions"].tolist())
-        lens = sel(stacked_outputs[f"{prefix}_lengths"])
-        html_string = get_html_rationales(tokens, scores, gold, pred, lens)
-        self.logger.log({f"{prefix}_rationales": wandb.Html(html_string)})
+        select = lambda v: [v[i] for i in idxs]
+        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
+        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():

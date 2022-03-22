@@ -60,15 +60,12 @@ class HFRationalizer(BaseRationalizer):
         self.pred_hidden_size = self.pred_hf.config.hidden_size
 
         # explainer
+        self.explainer_mlp = nn.Sequential(
+            nn.Linear(self.gen_hidden_size, self.gen_hidden_size),
+            nn.Tanh(),
+        )
         explainer_cls = available_explainers[self.explainer_fn]
-        if self.explainer_pre_mlp is True:
-            self.explainer = nn.Sequential(
-                nn.Linear(self.gen_hidden_size, self.gen_hidden_size),
-                nn.Tanh(),
-                explainer_cls(h_params, self.gen_hidden_size)
-            )
-        else:
-            self.explainer = explainer_cls(h_params, self.gen_hidden_size)
+        self.explainer = explainer_cls(h_params, self.gen_hidden_size)
 
         # freeze embedding layers
         if not self.gen_emb_requires_grad:
@@ -106,6 +103,7 @@ class HFRationalizer(BaseRationalizer):
             )
 
         # initialize params using xavier initialization for weights and zero for biases
+        self.init_weights(self.explainer_mlp)
         self.init_weights(self.explainer)
         self.init_weights(self.output_layer)
 
@@ -126,7 +124,7 @@ class HFRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask)
+            gen_h = self.gen_encoder(gen_e, ext_mask).hidden_states
             gen_h = self.gen_scalar_mix(gen_h, mask)
         else:
             # selected_layers = list(map(int, self.selected_layers.split(',')))
@@ -134,6 +132,8 @@ class HFRationalizer(BaseRationalizer):
             # gen_h = gen_h[selected_layers].mean(dim=0)
             gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
 
+        if self.explainer_pre_mlp:
+            gen_h = self.explainer_mlp(gen_h)
         z = self.explainer(gen_h, mask)
         z_mask = (z * mask.float()).unsqueeze(-1)
 

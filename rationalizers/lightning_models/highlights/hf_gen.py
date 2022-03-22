@@ -59,18 +59,15 @@ class GenHFRationalizer(BaseRationalizer):
             self.pred_encoder = LSTMEncoder('lstm', self.gen_hidden_size, bidirectional=self.pred_bidirectional)
         else:
             self.pred_encoder = MaskedAverageEncoder()
-        self.pred_hidden_size = self.gen_hidden_size
+        self.pred_hidden_size = self.gen_hidden_size * (1 + int(self.pred_bidirectional))
 
         # explainer
+        self.explainer_mlp = nn.Sequential(
+            nn.Linear(self.gen_hidden_size, self.gen_hidden_size),
+            nn.Tanh(),
+        )
         explainer_cls = available_explainers[self.explainer_fn]
-        if self.explainer_pre_mlp is True:
-            self.explainer = nn.Sequential(
-                nn.Linear(self.gen_hidden_size, self.gen_hidden_size),
-                nn.Tanh(),
-                explainer_cls(h_params, self.gen_hidden_size)
-            )
-        else:
-            self.explainer = explainer_cls(h_params, self.gen_hidden_size)
+        self.explainer = explainer_cls(h_params, self.gen_hidden_size)
 
         # freeze embedding layers
         if not self.gen_emb_requires_grad:
@@ -108,6 +105,7 @@ class GenHFRationalizer(BaseRationalizer):
             )
 
         # initialize params using xavier initialization for weights and zero for biases
+        self.init_weights(self.explainer_mlp)
         self.init_weights(self.explainer)
         self.init_weights(self.output_layer)
 
@@ -128,7 +126,7 @@ class GenHFRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask)
+            gen_h = self.gen_encoder(gen_e, ext_mask).hidden_states
             gen_h = self.gen_scalar_mix(gen_h, mask)
         else:
             # selected_layers = list(map(int, self.selected_layers.split(',')))
@@ -136,6 +134,8 @@ class GenHFRationalizer(BaseRationalizer):
             # gen_h = gen_h[selected_layers].mean(dim=0)
             gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
 
+        if self.explainer_pre_mlp:
+            gen_h = self.explainer_mlp(gen_h)
         z = self.explainer(gen_h, mask)
         z_mask = (z * mask.float()).unsqueeze(-1)
 
@@ -159,15 +159,12 @@ class GenHFRationalizer(BaseRationalizer):
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
             # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
 
-        if self.use_scalar_mix:
-            pred_h = self.pred_encoder(pred_e, ext_mask).hidden_states
-            pred_h = self.pred_scalar_mix(pred_h, mask)
+        if self.pred_arch == 'lstm':
+            _, summary = self.pred_encoder(pred_e, ext_mask)
         else:
-            pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
+            summary = self.pred_encoder(pred_e, ext_mask)
 
-        summary = masked_average(pred_h, mask)
         y_hat = self.output_layer(summary)
-
         return z, y_hat
 
     def get_loss(self, y_hat, y, prefix, mask=None):
