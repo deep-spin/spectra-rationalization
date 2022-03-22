@@ -37,6 +37,7 @@ class HFRationalizer(BaseRationalizer):
         self.gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
         self.pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)
         self.shared_gen_pred = h_params.get("shared_gen_pred", False)
+        self.use_scalar_mix = h_params.get("use_scalar_mix", True)
         self.dropout = h_params.get("dropout", 0.1)
         self.temperature = h_params.get("temperature", 1.0)
         self.selection_space = h_params.get("selection_space", 'embedding')
@@ -79,11 +80,19 @@ class HFRationalizer(BaseRationalizer):
         )
 
         # useful for stabilizing training
-        # self.scalar_mix = ScalarMixWithDropout(
-        #     mixture_size=self.pred_hf.config.num_hidden_layers+1,
-        #     dropout=self.dropout,
-        #     do_layer_norm=True,
-        # )
+        self.pred_scalar_mix = ScalarMixWithDropout(
+            mixture_size=self.pred_hf.config.num_hidden_layers+1,
+            dropout=self.dropout,
+            do_layer_norm=False,
+        )
+        if self.shared_gen_pred:
+            self.gen_scalar_mix = self.pred_scalar_mix
+        else:
+            self.gen_scalar_mix = ScalarMixWithDropout(
+                mixture_size=self.gen_hf.config.num_hidden_layers+1,
+                dropout=self.dropout,
+                do_layer_norm=False,
+            )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights(self.explainer)
@@ -105,7 +114,14 @@ class HFRationalizer(BaseRationalizer):
         x_mask = torch.ones_like(x) * self.mask_token_id  # create an input with full mask tokens
 
         gen_e = self.gen_emb_layer(x)
-        gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
+        gen_h = self.gen_encoder(gen_e, ext_mask)
+
+        if self.use_scalar_mix:
+            gen_h = self.gen_scalar_mix(gen_h.hidden_states, mask)
+        else:
+            # selected_layers = list(map(int, self.selected_layers.split(',')))
+            # gen_h = torch.stack(gen_h.hidden_states)[selected_layers].mean(dim=0)
+            gen_h = gen_h.last_hidden_state
 
         z = self.explainer(gen_h, mask)
         z_mask = (z * mask.float()).unsqueeze(-1)
@@ -125,7 +141,11 @@ class HFRationalizer(BaseRationalizer):
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
             ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
 
-        pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
+        pred_h = self.pred_encoder(pred_e, ext_mask)
+        if self.use_scalar_mix:
+            pred_h = self.pred_scalar_mix(pred_h.hidden_states, mask)
+        else:
+            pred_h = pred_h.last_hidden_state
 
         summary = masked_average(pred_h, mask)
         y_hat = self.output_layer(summary)
