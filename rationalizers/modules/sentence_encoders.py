@@ -3,6 +3,8 @@ import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from rationalizers.utils import masked_average
+
 
 class LSTMEncoder(nn.Module):
     """
@@ -30,13 +32,15 @@ class LSTMEncoder(nn.Module):
             bidirectional=bidirectional,
         )
 
-    def forward(self, x, mask, lengths):
+    def forward(self, x, mask, lengths=None):
         """
         :param x: sequence of word embeddings, shape [B, T, E]
         :param mask: byte mask that is 0 for invalid positions, shape [B, T]
         :param lengths: the lengths of each input sequence [B]
         :return:
         """
+        if lengths is None:
+            lengths = mask.int().sum(-1)
         packed_sequence = pack_padded_sequence(
             x, lengths, batch_first=True, enforce_sorted=False
         )
@@ -48,3 +52,17 @@ class LSTMEncoder(nn.Module):
         else:  # classify from final state
             final = hx[-1]
         return outputs, final
+
+
+class MaskedAverageEncoder(nn.Module):
+    """
+    This module encodes a sequence into a single vector using a masked average
+    """
+
+    def forward(self, x, mask):
+        """
+        :param x: sequence of word embeddings, shape [B, T, E]
+        :param mask: byte mask that is 0 for invalid positions, shape [B, T]
+        :return:
+        """
+        return masked_average(x, mask)
