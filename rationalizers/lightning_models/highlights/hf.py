@@ -43,6 +43,7 @@ class HFRationalizer(BaseRationalizer):
         self.selection_space = h_params.get("selection_space", 'embedding')
         self.selection_vector = h_params.get("selection_vector", 'mask')
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
+        self.selection_mask = h_params.get("selection_mask", True)
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.mask_token_id = tokenizer.mask_token_id
@@ -150,12 +151,11 @@ class HFRationalizer(BaseRationalizer):
         if self.selection_space == 'token':
             z_mask_bin = (z_mask > 0).float()
             pred_e = pred_e * z_mask_bin + pred_e_mask * (1 - z_mask_bin)
-            # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
         elif self.selection_space == 'embedding':
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-        else:
-            pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-            # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
+
+        if self.selection_mask:
+            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
 
         if self.use_scalar_mix:
             pred_h = self.pred_encoder(pred_e, ext_mask).hidden_states

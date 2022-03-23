@@ -40,6 +40,7 @@ class GenHFRationalizer(BaseRationalizer):
         self.selection_space = h_params.get("selection_space", 'embedding')
         self.selection_vector = h_params.get("selection_vector", 'mask')
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
+        self.selection_mask = h_params.get("selection_mask", True)
         self.pred_arch = h_params.get("pred_arch", 'lstm')
         self.pred_bidirectional = h_params.get("pred_bidirectional", True)
         self.explainer_fn = h_params.get("explainer", True)
@@ -152,17 +153,16 @@ class GenHFRationalizer(BaseRationalizer):
         if self.selection_space == 'token':
             z_mask_bin = (z_mask > 0).float()
             pred_e = pred_e * z_mask_bin + pred_e_mask * (1 - z_mask_bin)
-            # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
         elif self.selection_space == 'embedding':
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-        else:
-            pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-            # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
+
+        if self.selection_mask:
+            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
 
         if self.pred_arch == 'lstm':
-            _, summary = self.pred_encoder(pred_e, ext_mask)
+            _, summary = self.pred_encoder(pred_e, ext_mask == 0)
         else:
-            summary = self.pred_encoder(pred_e, ext_mask)
+            summary = self.pred_encoder(pred_e, ext_mask == 0)
 
         y_hat = self.output_layer(summary)
         return z, y_hat
