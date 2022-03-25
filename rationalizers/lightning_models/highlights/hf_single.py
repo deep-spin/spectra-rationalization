@@ -101,38 +101,12 @@ class HFRationalizerSingle(BaseRationalizer):
         ext_mask = mask[:, None, None, :]  # add head and seq dimension
         ext_mask = ext_mask.to(dtype=self.dtype)  # fp16 compatibility
         ext_mask = (1.0 - ext_mask) * -10000.0  # will set softmax to zero
-        x_mask = torch.ones_like(x) * self.mask_token_id  # create an input with full mask tokens
 
         gen_e = self.gen_emb_layer(x)
         gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
         z = self.explainer(gen_h, mask)
-        summary = masked_average(gen_h, mask)
+        summary = masked_average(gen_h, z)
         y_hat = self.output_layer(summary)
-        return z, y_hat
-
-        z = self.explainer(gen_h, mask)
-        z_mask = (z * mask.float()).unsqueeze(-1)
-
-        pred_e = self.pred_emb_layer(x)
-        pred_e_mask = self.pred_emb_layer(x_mask)
-
-        if self.selection_space == 'token':
-            z_mask_bin = (z_mask > 0).float()
-            pred_e = pred_e * z_mask_bin + pred_e_mask * (1 - z_mask_bin)
-            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
-
-        elif self.selection_space == 'embedding':
-            pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-
-        else:
-            pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
-            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0).long()
-
-        pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
-
-        summary = masked_average(pred_h, mask)
-        y_hat = self.output_layer(summary)
-
         return z, y_hat
 
     def get_loss(self, y_hat, y, prefix, mask=None):
