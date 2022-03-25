@@ -22,7 +22,7 @@ train:
     # early stopping
     monitor: 'val_f1score'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
-    monitor_patience: 20         # number of epochs to wait for early stopping
+    monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
     # bert-base-multilingual-cased
@@ -34,13 +34,21 @@ train:
     pred_arch: 'bert-base-cased'  # distilbert-base-cased
     gen_emb_requires_grad: False
     pred_emb_requires_grad: False
+    gen_encoder_requires_grad: False
+    pred_encoder_requires_grad: False
     shared_gen_pred: True
     explainer: 'attention'
     explainer_activation: 'sparsemax'
     selection_space: 'embedding'
+    use_scalar_mix: True
+    selection_vector: 'mask'
+    selection_faithfulness: True
+    selection_mask: True
+    explainer_pre_mlp: True
+
 
     # model: optimizer
-    optimizer: 'adam'
+    optimizer: 'adamw'
     lr: 0.00001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
@@ -62,8 +70,8 @@ train:
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
     gpus: 1
     gradient_clip_val: 5.0
-    min_epochs: 5
-    max_epochs: 25
+    min_epochs: 3
+    max_epochs: 10
     #limit_test_batches:
     #limit_train_batches: 10
     #limit_val_batches: 1
