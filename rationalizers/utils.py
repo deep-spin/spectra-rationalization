@@ -289,7 +289,7 @@ def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels
             else:
                 text += template_neg.format(-color, f(word))
         html_text = '<div style="width:100%">g: {} | p: {}:&nbsp;&nbsp; {}</div>'.format(
-            gold_l, pred_l, text
+            gold_l, pred_l.argmax(), text
         )
         return html_text
     html_texts = []
