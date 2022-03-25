@@ -43,7 +43,7 @@ class HFRationalizer(BaseRationalizer):
         self.selection_space = h_params.get("selection_space", 'embedding')
         self.selection_vector = h_params.get("selection_vector", 'mask')
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
-        self.selection_mask = h_params.get("selection_mask", True)
+        self.selection_mask = h_params.get("selection_mask", False)
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.mask_token_id = tokenizer.mask_token_id
@@ -125,7 +125,7 @@ class HFRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask).hidden_states
+            gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True).hidden_states
             gen_h = self.gen_scalar_mix(gen_h, mask)
         else:
             # selected_layers = list(map(int, self.selected_layers.split(',')))
@@ -158,7 +158,7 @@ class HFRationalizer(BaseRationalizer):
             ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
 
         if self.use_scalar_mix:
-            pred_h = self.pred_encoder(pred_e, ext_mask).hidden_states
+            pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
             pred_h = self.pred_scalar_mix(pred_h, mask)
         else:
             pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state

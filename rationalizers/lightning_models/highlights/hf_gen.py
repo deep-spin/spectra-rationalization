@@ -40,7 +40,7 @@ class GenHFRationalizer(BaseRationalizer):
         self.selection_space = h_params.get("selection_space", 'embedding')
         self.selection_vector = h_params.get("selection_vector", 'mask')
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
-        self.selection_mask = h_params.get("selection_mask", True)
+        self.selection_mask = h_params.get("selection_mask", False)
         self.pred_arch = h_params.get("pred_arch", 'lstm')
         self.pred_bidirectional = h_params.get("pred_bidirectional", True)
         self.explainer_fn = h_params.get("explainer", True)
@@ -55,9 +55,10 @@ class GenHFRationalizer(BaseRationalizer):
 
         # predictor module
         self.pred_emb_layer = self.gen_hf.embeddings
-        assert self.gen_emb_requires_grad is False
         if self.pred_arch == 'lstm':
-            self.pred_encoder = LSTMEncoder('lstm', self.gen_hidden_size, bidirectional=self.pred_bidirectional)
+            self.pred_encoder = LSTMEncoder(self.gen_hidden_size,
+                                            self.gen_hidden_size,
+                                            bidirectional=self.pred_bidirectional)
         else:
             self.pred_encoder = MaskedAverageEncoder()
         self.pred_hidden_size = self.gen_hidden_size * (1 + int(self.pred_bidirectional))
@@ -73,13 +74,9 @@ class GenHFRationalizer(BaseRationalizer):
         # freeze embedding layers
         if not self.gen_emb_requires_grad:
             freeze_module(self.gen_emb_layer)
-        if not self.pred_emb_requires_grad:
-            freeze_module(self.pred_emb_layer)
         # freeze models
         if not self.gen_encoder_requires_grad:
             freeze_module(self.gen_encoder)
-        if not self.pred_encoder_requires_grad:
-            freeze_module(self.pred_encoder)
 
         # define output layer
         self.output_layer = nn.Sequential(
@@ -91,19 +88,11 @@ class GenHFRationalizer(BaseRationalizer):
         )
 
         # useful for stabilizing training
-        self.pred_scalar_mix = ScalarMixWithDropout(
-            mixture_size=self.pred_hf.config.num_hidden_layers+1,
+        self.gen_scalar_mix = ScalarMixWithDropout(
+            mixture_size=self.gen_hf.config.num_hidden_layers+1,
             dropout=self.dropout,
             do_layer_norm=False,
         )
-        if self.shared_gen_pred:
-            self.gen_scalar_mix = self.pred_scalar_mix
-        else:
-            self.gen_scalar_mix = ScalarMixWithDropout(
-                mixture_size=self.gen_hf.config.num_hidden_layers+1,
-                dropout=self.dropout,
-                do_layer_norm=False,
-            )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights(self.explainer_mlp)
@@ -127,7 +116,7 @@ class GenHFRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask).hidden_states
+            gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True).hidden_states
             gen_h = self.gen_scalar_mix(gen_h, mask)
         else:
             # selected_layers = list(map(int, self.selected_layers.split(',')))
@@ -160,9 +149,9 @@ class GenHFRationalizer(BaseRationalizer):
             ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
 
         if self.pred_arch == 'lstm':
-            _, summary = self.pred_encoder(pred_e, ext_mask == 0)
+            _, summary = self.pred_encoder(pred_e, ext_mask.squeeze(2).squeeze(1) == 0)
         else:
-            summary = self.pred_encoder(pred_e, ext_mask == 0)
+            summary = self.pred_encoder(pred_e, ext_mask.squeeze(2).squeeze(1) == 0)
 
         y_hat = self.output_layer(summary)
         return z, y_hat
