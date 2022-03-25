@@ -40,7 +40,7 @@ class LSTMEncoder(nn.Module):
         :return:
         """
         if lengths is None:
-            lengths = mask.int().sum(-1)
+            lengths = mask.long().sum(-1).cpu()
         packed_sequence = pack_padded_sequence(
             x, lengths, batch_first=True, enforce_sorted=False
         )
