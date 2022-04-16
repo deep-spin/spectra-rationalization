@@ -45,7 +45,7 @@ class SparseMAPExplainer(BaseExplainer):
                 ),
                 dim=-1,
             )
-            x[lengths[k] :, 0] = -1e12
+            x[lengths[k]:, 0] = -1e12
 
             # Set transition scores for valid positions
             transition_scores = torch.tensor(t[k], device=scores.device)
