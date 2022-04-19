@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/imdb-sparsemax-hf/'  # path to save logs and models
+default_root_dir: 'experiments/imdb-sparsemax-hf-gen/'  # path to save logs and models
 
 
 # training args
@@ -27,11 +27,12 @@ train:
     # pytorch-lightning rationalizer model
     # bert-base-multilingual-cased
     tokenizer: 'bert-base-cased'
-    model: 'hf'
+    model: 'hf_gen'
     temperature: 1.0
     dropout: 0.1
     gen_arch: 'bert-base-cased'   # distilbert-base-cased
-    pred_arch: 'bert-base-cased'  # distilbert-base-cased
+    pred_arch: 'lstm'  # distilbert-base-cased
+    pred_bidirectional: True
     gen_emb_requires_grad: False
     pred_emb_requires_grad: False
     gen_encoder_requires_grad: False
@@ -45,6 +46,7 @@ train:
     selection_faithfulness: True
     selection_mask: True
     explainer_pre_mlp: True
+
 
     # model: optimizer
     optimizer: 'adamw'

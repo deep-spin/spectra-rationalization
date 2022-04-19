@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/imdb-sparsemax-hf/'  # path to save logs and models
+default_root_dir: 'experiments/imdb-sparsemap-hf/'  # path to save logs and models
 
 
 # training args
@@ -37,8 +37,9 @@ train:
     gen_encoder_requires_grad: False
     pred_encoder_requires_grad: True
     shared_gen_pred: False
-    explainer: 'attention'
-    explainer_activation: 'sparsemax'
+    explainer: 'sparsemap'
+    sparsemap_budget: 20
+    sparsemap_temperature: 0.01
     selection_space: 'embedding'
     use_scalar_mix: True
     selection_vector: 'mask'
