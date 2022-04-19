@@ -1,9 +1,7 @@
 import torch
 
 from rationalizers.explainers.base import BaseExplainer
-from rationalizers.modules.sparsemap import (
-    seq_budget_smap,
-)
+from rationalizers.modules.sparsemap import seq_budget_smap
 
 
 class SparseMAPExplainer(BaseExplainer):
@@ -26,7 +24,7 @@ class SparseMAPExplainer(BaseExplainer):
 
         # compute attention scores
         # [B, T, H] -> [B, T, 1]
-        h1 = self.layer(h)
+        h1 = self.self_scorer(h)
 
         t = torch.full((batch_size, target_size + 1), float(self.transition))
         z = []

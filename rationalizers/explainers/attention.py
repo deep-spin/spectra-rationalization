@@ -52,11 +52,13 @@ class AttentionExplainer(BaseExplainer):
             'softmax': torch.softmax,
         }
         self.activation = act2fn[h_params['explainer_activation']]
-        self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
+        # self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
+        self.self_scorer = torch.nn.Linear(enc_size, 1)
         self.temperature = h_params.get('temperature', 1.)
 
     def forward(self, h, mask=None):
-        logits = self.self_scorer(h, h)
+        # logits = self.self_scorer(h, h)
+        logits = self.self_scorer(h).squeeze(-1)
         z = self.activation(logits / self.temperature, dim=-1)
         z = torch.where(mask, z, z.new_zeros([1]))
         self.z = z
