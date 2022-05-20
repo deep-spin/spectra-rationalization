@@ -223,47 +223,48 @@ class HardKumaRationalizer(BaseRationalizer):
 
         loss = loss + self.lambda0.detach() * c0
 
-        # fused lasso (coherence constraint)
-
-        # cost z_t = 0, z_{t+1} = non-zero
-        zt_zero = pdf0[:, :-1]
-        ztp1_nonzero = pdf_nonzero[:, 1:]
-
-        # cost z_t = non-zero, z_{t+1} = zero
-        zt_nonzero = pdf_nonzero[:, :-1]
-        ztp1_zero = pdf0[:, 1:]
-
-        # number of transitions per sentence normalized by length
-        lasso_cost = zt_zero * ztp1_nonzero + zt_nonzero * ztp1_zero
-        lasso_cost = lasso_cost * mask.float()[:, :-1]
-        lasso_cost = lasso_cost.sum(1) / (lengths + 1e-9)  # [B]
-        lasso_cost = lasso_cost.sum() / batch_size
-
         # lagrange coherence dissatisfaction (batch average)
         target1 = self.lasso
 
-        # lagrange dissatisfaction, batch average of the constraint
-        c1_hat = lasso_cost - target1
+        if target1 != 0:
+            # fused lasso (coherence constraint)
 
-        # update moving average
-        self.c1_ma = self.alpha * self.c1_ma + (1 - self.alpha) * c1_hat.detach()
+            # cost z_t = 0, z_{t+1} = non-zero
+            zt_zero = pdf0[:, :-1]
+            ztp1_nonzero = pdf_nonzero[:, 1:]
 
-        # compute smoothed constraint
-        c1 = c1_hat + (self.c1_ma.detach() - c1_hat.detach())
+            # cost z_t = non-zero, z_{t+1} = zero
+            zt_nonzero = pdf_nonzero[:, :-1]
+            ztp1_zero = pdf0[:, 1:]
 
-        # update lambda
-        self.lambda1 = self.lambda1 * torch.exp(self.lagrange_lr * c1.detach())
-        self.lambda1 = self.lambda1.clamp(self.lambda_min, self.lambda_max)
+            # number of transitions per sentence normalized by length
+            lasso_cost = zt_zero * ztp1_nonzero + zt_nonzero * ztp1_zero
+            lasso_cost = lasso_cost * mask.float()[:, :-1]
+            lasso_cost = lasso_cost.sum(1) / (lengths + 1e-9)  # [B]
+            lasso_cost = lasso_cost.sum() / batch_size
 
-        with torch.no_grad():
-            stats["cost1_lasso"] = lasso_cost.item()
-            stats["target1"] = target1
-            stats["c1_hat"] = c1_hat.item()
-            stats["c1"] = c1.item()  # same as moving average
-            stats["lambda1"] = self.lambda1.item()
-            stats["lagrangian1"] = (self.lambda1 * c1_hat).item()
+            # lagrange dissatisfaction, batch average of the constraint
+            c1_hat = lasso_cost - target1
 
-        loss = loss + self.lambda1.detach() * c1
+            # update moving average
+            self.c1_ma = self.alpha * self.c1_ma + (1 - self.alpha) * c1_hat.detach()
+
+            # compute smoothed constraint
+            c1 = c1_hat + (self.c1_ma.detach() - c1_hat.detach())
+
+            # update lambda
+            self.lambda1 = self.lambda1 * torch.exp(self.lagrange_lr * c1.detach())
+            self.lambda1 = self.lambda1.clamp(self.lambda_min, self.lambda_max)
+
+            with torch.no_grad():
+                stats["cost1_lasso"] = lasso_cost.item()
+                stats["target1"] = target1
+                stats["c1_hat"] = c1_hat.item()
+                stats["c1"] = c1.item()  # same as moving average
+                stats["lambda1"] = self.lambda1.item()
+                stats["lagrangian1"] = (self.lambda1 * c1_hat).item()
+
+            loss = loss + self.lambda1.detach() * c1
 
         # z statistics
         num_0, num_c, num_1, total = get_z_stats(self.generator.z, mask)

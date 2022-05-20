@@ -11,3 +11,4 @@ ipdb>=0.13.4
 PyYAML>=5.4.0
 Cython>=0.29.21
 wandb>=0.10.20
+transformers
