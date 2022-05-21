@@ -134,16 +134,16 @@ class CounterfactualRationalizer(BaseRationalizer):
         # 4. (done) add option to use simpler predictors for both flows
         # 5. (done) implement repeat_interleave_as() function
         # 6. check how to use T5 as cf_generator:
-        #   6.1. (todo) may need to implement a remap vocab function
+        #   6.1. (done) may need to implement a remap vocab function
         #   6.2. (not needed) may need to subclass it to get the positions of predicted tokens
         # 7. (todo) implement a version of hf_counterfactual with reinforce
         # 8. (done) implement a version of hf_counterfactual with ST-gumbel-softmax
         self.z_bar = None
-        self.cf_mask_token_id = 0  # fixme
 
         # counterfactual generator module
         self.cf_gen_hf = AutoModel.from_pretrained(self.cf_gen_arch)
         self.cf_gen_tokenizer = AutoTokenizer.from_pretrained(self.cf_gen_arch)
+        self.cf_mask_token_id = self.cf_gen_tokenizer.mask_token_id
         self.cf_gen_emb_layer = self.cf_gen_hf.embeddings if 't5' not in self.cf_gen_arch else self.cf_gen_hf.shared
         self.cf_gen_encoder = self.cf_gen_hf.encoder
         self.cf_gen_lm_head = self.cf_gen_hf.lm_head
@@ -208,10 +208,11 @@ class CounterfactualRationalizer(BaseRationalizer):
         if not self.cf_pred_encoder_requires_grad:
             freeze_module(self.cf_pred_encoder)
 
-        # shared generator and predictor
+        # shared generator and predictor for factual flow
         if self.shared_gen_pred:
             del self.gen_scalar_mix  # unregister generator scalar mix
             self.gen_scalar_mix = self.pred_scalar_mix
+        # shared generator and predictor for counterfactual flow
         if self.cf_shared_gen_pred:
             del self.cf_gen_scalar_mix  # unregister generator scalar mix
             self.cf_gen_scalar_mix = self.cf_pred_scalar_mix
@@ -295,104 +296,10 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         return z, y_hat
 
-    @torch.no_grad()
-    def remap_input_to_counterfactual_vocab(self, x, z, mask):
-        """
-        todo: move this to outside of training loop
-        (all we need is x tokenizer with t5 tokenizer and the counts)
-        """
-        bert_tokenizer = self.tokenizer
-        t5_tokenizer = self.cf_gen_tokenizer
-        x_str = bert_tokenizer.batch_decode(x)
-        x_new = []
-        x_counts = []
-        for x_s in x_str:
-            x_new_inner = []
-            x_counts_inner = []
-            for word in x_s.split():
-                if word == bert_tokenizer.cls_token:
-                    p_bert = [bert_tokenizer.cls_token_id]
-                    p_t5 = [t5_tokenizer.vocab['X']]
-                elif word == bert_tokenizer.sep_token:
-                    p_bert = [bert_tokenizer.sep_token_id]
-                    p_t5 = [t5_tokenizer.eos_token_id]
-                elif word == bert_tokenizer.pad_token:
-                    p_bert = [bert_tokenizer.pad_token_id]
-                    p_t5 = [t5_tokenizer.pad_token_id]
-                elif word == bert_tokenizer.unk_token:
-                    p_bert = [bert_tokenizer.unk_token_id]
-                    p_t5 = [t5_tokenizer.unk_token_id]
-                else:
-                    p_bert = bert_tokenizer(word)['input_ids'][1:-1]  # remove [cls] and [sep]
-                    p_t5 = t5_tokenizer(word)['input_ids'][:-1]  # remove </s>
-                if len(p_bert) < len(p_t5):
-                    c = [1] * (len(p_bert) - 1) + [1 + len(p_t5) - len(p_bert)]
-                elif len(p_bert) > len(p_t5):
-                    c = [1] * len(p_t5) + [0]*(len(p_bert) - len(p_t5))
-                else:
-                    c = [1] * len(p_bert)
-                x_counts_inner.extend(c)
-                x_new_inner.extend(p_t5)
-            x_counts.append(torch.as_tensor(x_counts_inner))
-            x_new.append(torch.as_tensor(x_new_inner))
-
-        z_new = [z[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x_str))]
-        mask_new = [mask[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x_str))]
-
-        x_new_pt = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=t5_tokenizer.pad_token_id)
-        z_new_pt = torch.nn.utils.rnn.pad_sequence(z_new, batch_first=True, padding_value=0)
-        mask_new_pt = torch.nn.utils.rnn.pad_sequence(mask_new, batch_first=True, padding_value=0)
-        return x_new_pt, z_new_pt, mask_new_pt.bool()
-
-    @torch.no_grad()
-    def remap_input_to_counterfactual_vocab_brute_force(self, x, z, mask):
-        """
-        todo: move this to outside of training loop
-        (all we need is x tokenizer with t5 tokenizer and the counts)
-        """
-        bert_tokenizer = self.tokenizer
-        t5_tokenizer = self.cf_gen_tokenizer
-        x_new = []
-        x_counts = []
-        for x_i in x:
-            x_new_inner = []
-            x_counts_inner = []
-            for word in bert_tokenizer.convert_ids_to_tokens(x_i):
-                word = word.replace('##', '')
-                if word == bert_tokenizer.cls_token:
-                    p_bert = [bert_tokenizer.cls_token_id]
-                    p_t5 = [t5_tokenizer.vocab['X']]
-                elif word == bert_tokenizer.sep_token:
-                    p_bert = [bert_tokenizer.sep_token_id]
-                    p_t5 = [t5_tokenizer.eos_token_id]
-                elif word == bert_tokenizer.pad_token:
-                    p_bert = [bert_tokenizer.pad_token_id]
-                    p_t5 = [t5_tokenizer.pad_token_id]
-                elif word == bert_tokenizer.unk_token:
-                    p_bert = [bert_tokenizer.unk_token_id]
-                    p_t5 = [t5_tokenizer.unk_token_id]
-                else:
-                    p_bert = bert_tokenizer(word)['input_ids'][1:-1]  # remove [cls] and [sep]
-                    p_t5 = t5_tokenizer(word)['input_ids'][:-1]  # remove </s>
-                if len(p_bert) < len(p_t5):
-                    c = [1] * (len(p_bert) - 1) + [1 + len(p_t5) - len(p_bert)]
-                elif len(p_bert) > len(p_t5):
-                    c = [1] * len(p_t5) + [0]*(len(p_bert) - len(p_t5))
-                else:
-                    c = [1] * len(p_bert)
-                x_counts_inner.extend(c)
-                x_new_inner.extend(p_t5)
-            x_counts.append(torch.as_tensor(x_counts_inner))
-            x_new.append(torch.as_tensor(x_new_inner))
-        z_new = [z[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x))]
-        mask_new = [mask[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x))]
-        x_new_pt = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=t5_tokenizer.pad_token_id)
-        z_new_pt = torch.nn.utils.rnn.pad_sequence(z_new, batch_first=True, padding_value=0)
-        mask_new_pt = torch.nn.utils.rnn.pad_sequence(mask_new, batch_first=True, padding_value=0)
-        return x_new_pt, z_new_pt, mask_new_pt.bool()
-
     def get_counterfactual_flow(self, x, z, mask=None):
-        x, z, mask = self.remap_input_to_counterfactual_vocab(x, z, mask)
+        x, z, mask = self.remap_input_to_counterfactual_vocab(
+            self.tokenizer, self.cf_gen_tokenizer, x, z, mask
+        )
 
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'ids' else x
@@ -447,8 +354,8 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # expand z to account for the new tokens
         x_tilde = gen_ids
-        z_tilde = repeat_interleave_as(z, gen_ids)
-        mask_tilde = repeat_interleave_as(mask, gen_ids)
+        z_tilde = repeat_interleave_as_gen_ids(z, gen_ids)
+        mask_tilde = repeat_interleave_as_gen_ids(mask, gen_ids)
         ext_mask_tilde = (1.0 - mask_tilde[:, None, None, :].to(self.dtype)) * -10000.0
 
         if self.cf_selection_faithfulness is True:
@@ -484,6 +391,9 @@ class CounterfactualRationalizer(BaseRationalizer):
         return z_bar.squeeze(-1), y_hat
 
     def get_loss(self, y_hat, y, prefix, mask=None):
+        pass
+
+    def get_factual_loss(self, y_hat, y, prefix, mask=None):
         """
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -511,6 +421,79 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         return loss, stats
 
+    def get_cunterfactual_loss(self, y_hat, y, prefix, mask=None, baseline=False):
+        """
+        :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
+        :param y: tensor with gold labels. torch.BoolTensor of shape [B]
+        :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :return: tuple containing:
+            `loss cost (torch.FloatTensor)`: the result of the loss function
+            `loss stats (dict): dict with loss statistics
+        """
+        stats = {}
+        loss_vec = self.criterion(y_hat, y)  # [B] or [B,C]
+
+        # main MSE loss for p(y | x, z)
+        if not self.is_multilabel:
+            loss_vec = loss_vec.mean(1)  # [B,C] -> [B]
+
+        loss = loss_vec.mean()  # [1]
+        if not self.is_multilabel:
+            stats["mse"] = loss.item()  # [1]
+
+        # recover z
+        z = self.z_bar.squeeze(-1)  # [B, T]
+
+        # get P(z = 0 | x) and P(z = 1 | x)
+        logp_z0 = self.explainer.log_prob(1.0)  # [B,T], log P(z = 0 | x) = log P(z_bar = 1 | x)
+        logp_z1 = self.explainer.log_prob(0.0)  # [B,T], log P(z = 1 | x) = log P(z_bar = 0 | x)
+
+        # compute log p(z|x) for each case (z==0 and z==1) and mask
+        logpz = torch.where(z == 0, logp_z0, logp_z1)
+        logpz = torch.where(mask, logpz, logpz.new_zeros([1]))
+
+        # compute generator loss
+        cost_vec = loss_vec.detach()
+        if self.baseline:
+            # cost_vec is neg reward
+            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
+        else:
+            # cost_vec is neg reward
+            cost_logpz = (cost_vec * logpz.sum(1)).mean(0)
+
+        # MSE with regularizers = neg reward
+        obj = cost_vec.mean()
+        stats["obj"] = obj.item()
+
+        # add baseline
+        if self.baseline:
+            self.n_points += 1.0
+            self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
+
+        # pred diff doesn't do anything if only 1 aspect being trained
+        if not self.is_multilabel:
+            pred_diff = y_hat.max(dim=1)[0] - y_hat.min(dim=1)[0]
+            pred_diff = pred_diff.mean()
+            stats["pred_diff"] = pred_diff.item()
+
+        # generator cost
+        stats["cost_g"] = cost_logpz.item()
+
+        # predictor cost
+        stats["cost_p"] = loss.item()
+
+        # latent selection stats
+        num_0, num_c, num_1, total = get_z_stats(z, mask)
+        stats["p0"] = num_0 / float(total)
+        stats["pc"] = num_c / float(total)
+        stats["p1"] = num_1 / float(total)
+        stats["selected"] = num_1
+        stats["total"] = float(total)
+
+        main_loss = loss + cost_logpz
+        stats["main_loss"] = main_loss.item()
+        return main_loss, stats
+
 
 def make_input_for_t5(e, z, mask):
     bs, seq_len = z.shape
@@ -524,7 +507,7 @@ def make_input_for_t5(e, z, mask):
     return e.gather(1, z_all_but_succ), z_first * z_mask.float(), mask & z_mask
 
 
-def repeat_interleave_as(x_ids, g_ids, pad_id=0, idx_a=32000, idx_b=32099):
+def repeat_interleave_as_gen_ids(x_ids, g_ids, pad_id=0, idx_a=32000, idx_b=32099):
     x_rep = []
     for i in range(x_ids.shape[0]):
         z_x = (x_ids[i] >= idx_a) & (x_ids[i] <= idx_b)  # select sentinel tokens
@@ -542,3 +525,89 @@ def repeat_interleave_as(x_ids, g_ids, pad_id=0, idx_a=32000, idx_b=32099):
         n_x[n_x == 0] = counts[outputs]
         x_rep.append(torch.repeat_interleave(x_ids[i], n_x, dim=-1))
     return torch.nn.utils.rnn.pad_sequence(x_rep, batch_first=True, padding_value=pad_id)
+
+
+@torch.no_grad()
+def remap_input_to_counterfactual_vocab(bert_tokenizer, t5_tokenizer, x, z, mask):
+    x_str = bert_tokenizer.batch_decode(x)
+    x_new = []
+    x_counts = []
+    for x_s in x_str:
+        x_new_inner = []
+        x_counts_inner = []
+        for word in x_s.split():
+            if word == bert_tokenizer.cls_token:
+                p_bert = [bert_tokenizer.cls_token_id]
+                p_t5 = [t5_tokenizer.vocab['X']]
+            elif word == bert_tokenizer.sep_token:
+                p_bert = [bert_tokenizer.sep_token_id]
+                p_t5 = [t5_tokenizer.eos_token_id]
+            elif word == bert_tokenizer.pad_token:
+                p_bert = [bert_tokenizer.pad_token_id]
+                p_t5 = [t5_tokenizer.pad_token_id]
+            elif word == bert_tokenizer.unk_token:
+                p_bert = [bert_tokenizer.unk_token_id]
+                p_t5 = [t5_tokenizer.unk_token_id]
+            else:
+                p_bert = bert_tokenizer(word)['input_ids'][1:-1]  # remove [cls] and [sep]
+                p_t5 = t5_tokenizer(word)['input_ids'][:-1]  # remove </s>
+            if len(p_bert) < len(p_t5):
+                c = [1] * (len(p_bert) - 1) + [1 + len(p_t5) - len(p_bert)]
+            elif len(p_bert) > len(p_t5):
+                c = [1] * len(p_t5) + [0]*(len(p_bert) - len(p_t5))
+            else:
+                c = [1] * len(p_bert)
+            x_counts_inner.extend(c)
+            x_new_inner.extend(p_t5)
+        x_counts.append(torch.as_tensor(x_counts_inner))
+        x_new.append(torch.as_tensor(x_new_inner))
+
+    z_new = [z[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x_str))]
+    mask_new = [mask[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x_str))]
+
+    x_new_pt = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=t5_tokenizer.pad_token_id)
+    z_new_pt = torch.nn.utils.rnn.pad_sequence(z_new, batch_first=True, padding_value=0)
+    mask_new_pt = torch.nn.utils.rnn.pad_sequence(mask_new, batch_first=True, padding_value=0)
+    return x_new_pt, z_new_pt, mask_new_pt.bool()
+
+
+@torch.no_grad()
+def remap_input_to_counterfactual_vocab_brute_force(bert_tokenizer, t5_tokenizer, x, z, mask):
+    x_new = []
+    x_counts = []
+    for x_i in x:
+        x_new_inner = []
+        x_counts_inner = []
+        for word in bert_tokenizer.convert_ids_to_tokens(x_i):
+            word = word.replace('##', '')
+            if word == bert_tokenizer.cls_token:
+                p_bert = [bert_tokenizer.cls_token_id]
+                p_t5 = [t5_tokenizer.vocab['X']]
+            elif word == bert_tokenizer.sep_token:
+                p_bert = [bert_tokenizer.sep_token_id]
+                p_t5 = [t5_tokenizer.eos_token_id]
+            elif word == bert_tokenizer.pad_token:
+                p_bert = [bert_tokenizer.pad_token_id]
+                p_t5 = [t5_tokenizer.pad_token_id]
+            elif word == bert_tokenizer.unk_token:
+                p_bert = [bert_tokenizer.unk_token_id]
+                p_t5 = [t5_tokenizer.unk_token_id]
+            else:
+                p_bert = bert_tokenizer(word)['input_ids'][1:-1]  # remove [cls] and [sep]
+                p_t5 = t5_tokenizer(word)['input_ids'][:-1]  # remove </s>
+            if len(p_bert) < len(p_t5):
+                c = [1] * (len(p_bert) - 1) + [1 + len(p_t5) - len(p_bert)]
+            elif len(p_bert) > len(p_t5):
+                c = [1] * len(p_t5) + [0]*(len(p_bert) - len(p_t5))
+            else:
+                c = [1] * len(p_bert)
+            x_counts_inner.extend(c)
+            x_new_inner.extend(p_t5)
+        x_counts.append(torch.as_tensor(x_counts_inner))
+        x_new.append(torch.as_tensor(x_new_inner))
+    z_new = [z[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x))]
+    mask_new = [mask[i].repeat_interleave(x_counts[i], dim=-1) for i in range(len(x))]
+    x_new_pt = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=t5_tokenizer.pad_token_id)
+    z_new_pt = torch.nn.utils.rnn.pad_sequence(z_new, batch_first=True, padding_value=0)
+    mask_new_pt = torch.nn.utils.rnn.pad_sequence(mask_new, batch_first=True, padding_value=0)
+    return x_new_pt, z_new_pt, mask_new_pt.bool()
