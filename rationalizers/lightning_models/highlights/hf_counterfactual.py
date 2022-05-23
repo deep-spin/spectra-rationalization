@@ -303,7 +303,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         return z, y_hat
 
     def get_counterfactual_flow(self, x, z, mask=None):
-        x, z, mask = self.remap_input_to_counterfactual_vocab(
+        x, z, mask = remap_input_to_counterfactual_vocab(
             self.tokenizer, self.cf_gen_tokenizer, x, z, mask
         )
 
