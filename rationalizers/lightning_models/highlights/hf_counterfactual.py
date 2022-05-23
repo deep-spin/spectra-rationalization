@@ -62,6 +62,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_selection_mask = h_params.get("cf_selection_mask", True)
         self.cf_selection_faithfulness = h_params.get("cf_selection_faithfulness", True)
         self.cf_use_reinforce = h_params.get('cf_use_reinforce', True)
+        self.cf_use_baseline = h_params.get('cf_use_baseline', True)
         # both:
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -139,6 +140,11 @@ class CounterfactualRationalizer(BaseRationalizer):
         # 7. (todo) implement a version of hf_counterfactual with reinforce
         # 8. (done) implement a version of hf_counterfactual with ST-gumbel-softmax
         self.z_bar = None
+
+        # for reinforce
+        self.log_prob_x_tilde = None
+        self.n_points = 0
+        self.mean_baseline = 0
 
         # counterfactual generator module
         self.cf_gen_hf = AutoModel.from_pretrained(self.cf_gen_arch)
@@ -339,9 +345,9 @@ class CounterfactualRationalizer(BaseRationalizer):
                 # fix last hidden state as the output of scalar mix
                 cf_gen_enc_out.last_hidden_state = h_tilde
                 # sample autoregressively
-                gen_ids = self.cf_gen_hf.generate(
+                gen_ids, logits = self.cf_gen_hf.generate(
                     encoder_outputs=cf_gen_enc_out, attention_mask=mask,
-                    **self.cf_sample_kwargs
+                    output_scores=True, **self.cf_sample_kwargs
                 )
             else:
                 # sample directly from the output layer
@@ -351,6 +357,9 @@ class CounterfactualRationalizer(BaseRationalizer):
             # use the ST-gumbel-softmax trick
             logits = self.cf_gen_lm_head(h_tilde)
             gen_ids = nn.functional.gumbel_softmax(logits, hard=True, dim=- 1)
+
+        # compute log proba
+        self.log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         # expand z to account for the new tokens
         x_tilde = gen_ids
@@ -433,6 +442,10 @@ class CounterfactualRationalizer(BaseRationalizer):
         stats = {}
         loss_vec = self.criterion(y_hat, y)  # [B] or [B,C]
 
+        # x = h
+        # y = y_tilde
+        # z = x_tilde
+
         # main MSE loss for p(y | x, z)
         if not self.is_multilabel:
             loss_vec = loss_vec.mean(1)  # [B,C] -> [B]
@@ -442,11 +455,11 @@ class CounterfactualRationalizer(BaseRationalizer):
             stats["mse"] = loss.item()  # [1]
 
         # recover z
-        z = self.z_bar.squeeze(-1)  # [B, T]
+        z = (1 - self.z_bar.squeeze(-1)) * mask.float()  # [B, T]
 
         # get P(z = 0 | x) and P(z = 1 | x)
-        logp_z0 = self.explainer.log_prob(1.0)  # [B,T], log P(z = 0 | x) = log P(z_bar = 1 | x)
-        logp_z1 = self.explainer.log_prob(0.0)  # [B,T], log P(z = 1 | x) = log P(z_bar = 0 | x)
+        logp_z0 = 1 - self.log_prob_x_tilde  # [B,T], log P(z = 0 | x)
+        logp_z1 = self.log_prob_x_tilde  # [B,T], log P(z = 1 | x)
 
         # compute log p(z|x) for each case (z==0 and z==1) and mask
         logpz = torch.where(z == 0, logp_z0, logp_z1)
@@ -454,19 +467,15 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # compute generator loss
         cost_vec = loss_vec.detach()
-        if self.baseline:
-            # cost_vec is neg reward
-            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
-        else:
-            # cost_vec is neg reward
-            cost_logpz = (cost_vec * logpz.sum(1)).mean(0)
+        # cost_vec is neg reward
+        cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
 
         # MSE with regularizers = neg reward
         obj = cost_vec.mean()
         stats["obj"] = obj.item()
 
         # add baseline
-        if self.baseline:
+        if self.cf_use_baseline:
             self.n_points += 1.0
             self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
 
