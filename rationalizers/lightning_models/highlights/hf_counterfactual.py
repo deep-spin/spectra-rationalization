@@ -397,7 +397,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         summary = masked_average(pred_h, mask_tilde)
         y_hat = self.cf_output_layer(summary)
 
-        return z_bar.squeeze(-1), y_hat
+        return x_tilde, z_tilde, mask_tilde, y_hat
 
     def get_loss(self, y_hat, y, prefix, mask=None):
         pass
@@ -430,7 +430,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         return loss, stats
 
-    def get_cunterfactual_loss(self, y_hat, y, prefix, mask=None, baseline=False):
+    def get_cunterfactual_loss(self, y_hat, y, prefix, mask=None):
         """
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -451,55 +451,62 @@ class CounterfactualRationalizer(BaseRationalizer):
             loss_vec = loss_vec.mean(1)  # [B,C] -> [B]
 
         loss = loss_vec.mean()  # [1]
+        main_loss = loss
+
         if not self.is_multilabel:
             stats["mse"] = loss.item()  # [1]
+        else:
+            stats["criterion"] = loss.item()  # [1]
 
-        # recover z
-        z = (1 - self.z_bar.squeeze(-1)) * mask.float()  # [B, T]
+        if self.cf_use_reinforce:
 
-        # get P(z = 0 | x) and P(z = 1 | x)
-        logp_z0 = 1 - self.log_prob_x_tilde  # [B,T], log P(z = 0 | x)
-        logp_z1 = self.log_prob_x_tilde  # [B,T], log P(z = 1 | x)
+            # recover z
+            z = (1 - self.z_bar.squeeze(-1)) * mask.float()  # [B, T]
 
-        # compute log p(z|x) for each case (z==0 and z==1) and mask
-        logpz = torch.where(z == 0, logp_z0, logp_z1)
-        logpz = torch.where(mask, logpz, logpz.new_zeros([1]))
+            # get P(z = 0 | x) and P(z = 1 | x)
+            logp_z0 = 1 - self.log_prob_x_tilde  # [B,T], log P(z = 0 | x)
+            logp_z1 = self.log_prob_x_tilde  # [B,T], log P(z = 1 | x)
 
-        # compute generator loss
-        cost_vec = loss_vec.detach()
-        # cost_vec is neg reward
-        cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
+            # compute log p(z|x) for each case (z==0 and z==1) and mask
+            logpz = torch.where(z == 0, logp_z0, logp_z1)
+            logpz = torch.where(mask, logpz, logpz.new_zeros([1]))
 
-        # MSE with regularizers = neg reward
-        obj = cost_vec.mean()
-        stats["obj"] = obj.item()
+            # compute generator loss
+            cost_vec = loss_vec.detach()
+            # cost_vec is neg reward
+            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
 
-        # add baseline
-        if self.cf_use_baseline:
-            self.n_points += 1.0
-            self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
+            # MSE with regularizers = neg reward
+            obj = cost_vec.mean()
+            stats["obj"] = obj.item()
 
-        # pred diff doesn't do anything if only 1 aspect being trained
-        if not self.is_multilabel:
-            pred_diff = y_hat.max(dim=1)[0] - y_hat.min(dim=1)[0]
-            pred_diff = pred_diff.mean()
-            stats["pred_diff"] = pred_diff.item()
+            # add baseline
+            if self.cf_use_baseline:
+                self.n_points += 1.0
+                self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
 
-        # generator cost
-        stats["cost_g"] = cost_logpz.item()
+            # pred diff doesn't do anything if only 1 aspect being trained
+            if not self.is_multilabel:
+                pred_diff = y_hat.max(dim=1)[0] - y_hat.min(dim=1)[0]
+                pred_diff = pred_diff.mean()
+                stats["pred_diff"] = pred_diff.item()
 
-        # predictor cost
-        stats["cost_p"] = loss.item()
+            # generator cost
+            stats["cost_g"] = cost_logpz.item()
+
+            # predictor cost
+            stats["cost_p"] = loss.item()
+
+            main_loss = loss + cost_logpz
 
         # latent selection stats
-        num_0, num_c, num_1, total = get_z_stats(z, mask)
-        stats["p0"] = num_0 / float(total)
-        stats["pc"] = num_c / float(total)
-        stats["p1"] = num_1 / float(total)
-        stats["selected"] = num_1
-        stats["total"] = float(total)
+        num_0, num_c, num_1, total = get_z_stats(self.z_bar, mask)
+        stats[prefix + "_p0"] = num_0 / float(total)
+        stats[prefix + "_pc"] = num_c / float(total)
+        stats[prefix + "_p1"] = num_1 / float(total)
+        stats[prefix + "_selected"] = num_1
+        stats[prefix + "_total"] = float(total)
 
-        main_loss = loss + cost_logpz
         stats["main_loss"] = main_loss.item()
         return main_loss, stats
 
