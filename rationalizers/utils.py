@@ -79,16 +79,23 @@ def save_config_to_csv(dict_args: dict, path: str):
             writer.writerow([key, value])
 
 
-def load_object(path: str):
+def load_object(path: str, not_exist_ok: bool = True):
     """
     Unpickle a saved object.
 
     :param path: path to a pickled object
+    :param not_exist_ok: whether it is ok if the obj does not exist
     :return: the object
     """
+    if not os.path.exists(path) and not_exist_ok:
+        return None
     with open(path, "rb") as handle:
         tokenizer = pickle.load(handle)
     return tokenizer
+
+
+def load_torch_object(path: str):
+    return torch.load(path, map_location=lambda storage, loc: storage)
 
 
 def load_yaml_config(path: str):
@@ -273,6 +280,9 @@ def masked_average(tensor, mask):
     tensor_sum = (tensor * mask.float().unsqueeze(-1)).sum(1)
     tensor_mean = tensor_sum / mask.sum(-1).float().unsqueeze(-1)
     return tensor_mean
+
+
+
 
 
 def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):

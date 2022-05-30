@@ -32,6 +32,7 @@ def run(args):
     dm.load_encoders(
         checkpoint_dir,
         load_tokenizer=args.load_tokenizer and tokenizer is None,
+        load_cf_tokenizer=False,
         load_label_encoder=args.load_label_encoder,
     )
     dm.prepare_data()

@@ -20,6 +20,13 @@ if __name__ == "__main__":
         type=str,
         help="Path to a saved model checkpoint. Used for `predict` only. Will overwrite config file's option.",
     )
+    parser.add_argument(
+        "--factual-ckpt",
+        type=str,
+        help="Path to a saved factual rationalizer. "
+             "Used for `cf_train` and `cf_predict` only. "
+             "Will overwrite config file's option.",
+    )
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
