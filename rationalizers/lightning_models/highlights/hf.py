@@ -155,7 +155,8 @@ class HFRationalizer(BaseRationalizer):
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
 
         if self.selection_mask:
-            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
+            # ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
+            ext_mask = (1.0 - z_mask.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
         if self.use_scalar_mix:
             pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states

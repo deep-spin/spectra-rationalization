@@ -78,7 +78,7 @@ class BaseDataModule(pl.LightningDataModule):
             sampler=sampler,
             collate_fn=self._collate_fn,
             batch_size=self.batch_size,
-            num_workers=self.num_workers,
+            num_workers=0,
         )
 
     def test_dataloader(self):
@@ -88,5 +88,5 @@ class BaseDataModule(pl.LightningDataModule):
             sampler=sampler,
             collate_fn=self._collate_fn,
             batch_size=self.batch_size,
-            num_workers=self.num_workers,
+            num_workers=0,
         )

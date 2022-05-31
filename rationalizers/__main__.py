@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from rationalizers import predict, train, resume
+from rationalizers import predict, train, resume, cf_train
 from rationalizers.utils import (
     configure_output_dir,
     configure_seed,
@@ -13,7 +13,7 @@ from rationalizers.utils import (
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", type=str, choices=["train", "predict", "resume"])
+    parser.add_argument("task", type=str, choices=["train", "cf_train", "predict", "resume"])
     parser.add_argument("--config", type=str, help="Path to YAML config file.")
     parser.add_argument(
         "--ckpt",
@@ -27,6 +27,11 @@ if __name__ == "__main__":
              "Used for `cf_train` and `cf_predict` only. "
              "Will overwrite config file's option.",
     )
+    parser.add_argument(
+        "--share-tokenizers",
+        action="store_true",
+        help="Share factual and counterfactual tokenizers",
+    )
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
@@ -38,7 +43,7 @@ if __name__ == "__main__":
     }
 
     # define args for each task
-    if tmp_args.task == "train":
+    if tmp_args.task in ["train", "cf_train"]:
         config_dict = {**general_dict, **yaml_config_dict["train"]}
 
     elif tmp_args.task == "predict":
@@ -110,6 +115,8 @@ if __name__ == "__main__":
     # train or predict!
     if tmp_args.task == "train":
         train.run(args)
+    elif tmp_args.task == "cf_train":
+        cf_train.run(args)
     elif tmp_args.task == "resume":
         resume.run(args)
     elif tmp_args.task == "predict":

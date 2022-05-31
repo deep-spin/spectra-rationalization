@@ -1,15 +1,20 @@
 import logging
+import os
 
+import numpy as np
 import torch
+import wandb
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
-from rationalizers import cf_constants
+from rationalizers import cf_constants, constants
 from rationalizers.explainers import available_explainers
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
+from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.scalar_mix import ScalarMixWithDropout
 from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
-from rationalizers.utils import get_z_stats, freeze_module, masked_average
+from rationalizers.utils import get_z_stats, freeze_module, masked_average, get_rationales, unroll, get_html_rationales, \
+    save_rationales
 
 shell_logger = logging.getLogger(__name__)
 
@@ -64,11 +69,13 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_selection_faithfulness = h_params.get("cf_selection_faithfulness", True)
         self.cf_use_reinforce = h_params.get('cf_use_reinforce', True)
         self.cf_use_baseline = h_params.get('cf_use_baseline', True)
+        self.cf_lbda = h_params.get('cf_lbda', 1.0)
+        self.cf_generate_kwargs = h_params.get('cf_generate_kwargs', dict())
         # both:
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.temperature = h_params.get("temperature", 1.0)
-        self.shared_preds = h_params.get("shared_preds", True)
+        self.share_preds = h_params.get("share_preds", True)
 
         if self.shared_gen_pred:
             assert self.gen_arch == self.pred_arch
@@ -80,7 +87,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         ########################
         self.z = None
         self.mask_token_id = tokenizer.mask_token_id
-
         # generator module
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
         self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
@@ -129,7 +135,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         ########################
         # counterfactual flow
         ########################
-        self.z_bar = None
+        self.z_tilde = None
 
         # for reinforce
         self.log_prob_x_tilde = None
@@ -137,12 +143,19 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.mean_baseline = 0
 
         # counterfactual generator module
-        self.cf_gen_hf = AutoModel.from_pretrained(self.cf_gen_arch)
+        if 't5' in self.cf_gen_arch:
+            from transformers import T5ForConditionalGeneration
+            self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
+            self.cf_gen_lm_head = self.cf_gen_hf.lm_head
+        elif 'bert' in self.cf_gen_arch:
+            from transformers import BertForMaskedLM
+            bert_with_mlm_head = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
+            self.cf_gen_hf = bert_with_mlm_head.bert
+            self.cf_gen_lm_head = bert_with_mlm_head.cls
         self.cf_gen_tokenizer = AutoTokenizer.from_pretrained(self.cf_gen_arch)
         self.cf_mask_token_id = self.cf_gen_tokenizer.mask_token_id
         self.cf_gen_emb_layer = self.cf_gen_hf.embeddings if 't5' not in self.cf_gen_arch else self.cf_gen_hf.shared
         self.cf_gen_encoder = self.cf_gen_hf.encoder
-        self.cf_gen_lm_head = self.cf_gen_hf.lm_head
         self.cf_gen_hidden_size = self.cf_gen_hf.config.hidden_size
         self.cf_gen_scalar_mix = ScalarMixWithDropout(
             mixture_size=self.cf_gen_hf.config.num_hidden_layers+1,
@@ -153,7 +166,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         if self.cf_pred_arch == 'lstm':
             self.cf_pred_encoder = LSTMEncoder(self.cf_gen_hidden_size, self.cf_gen_hidden_size, bidirectional=True)
             self.cf_pred_hidden_size = self.cf_gen_hidden_size * 2
-        elif self.cf_pred_hf == 'masked_average':
+        elif self.cf_pred_arch == 'masked_average':
             self.cf_pred_encoder = MaskedAverageEncoder()
             self.cf_pred_hidden_size = self.cf_gen_hidden_size
         else:
@@ -214,7 +227,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_gen_scalar_mix = self.cf_pred_scalar_mix
 
         # shared factual and counterfactual predictors
-        if self.shared_preds:
+        if self.share_preds:
             del self.cf_pred_hf
             del self.cf_pred_emb_layer
             del self.cf_pred_encoder
@@ -233,8 +246,9 @@ class CounterfactualRationalizer(BaseRationalizer):
         x: torch.LongTensor,
         x_cf: torch.LongTensor = None,
         c_cf: list = None,
-        current_epoch=None, mask:
-        torch.BoolTensor = None
+        mask: torch.BoolTensor = None,
+        mask_cf: torch.BoolTensor = None,
+        current_epoch=None,
     ):
         """
         Compute forward-pass.
@@ -242,22 +256,19 @@ class CounterfactualRationalizer(BaseRationalizer):
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param x_cf: counterfactual input ids tensor. torch.LongTensor of shape [B, T]
         :param c_cf: input counts for counterfactual mapping.
-        :param current_epoch: int represents the current epoch.
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :return: the output from SentimentPredictor. Torch.Tensor of shape [B, C]
+        :param mask_cf: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param current_epoch: int represents the current epoch.
+        :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
         # factual flow
         z, y_hat = self.get_factual_flow(x, mask=mask)
 
         # align factual z with counterfactual ids
-        z = repeat_interleave_and_pad(z, c_cf, pad_id=cf_constants.PAD_ID)
-
-        # do the same for the mask
-        if mask is not None:
-            mask = repeat_interleave_and_pad(mask, c_cf, pad_id=cf_constants.PAD_ID)
+        z_cf = repeat_interleave_and_pad(z, c_cf, pad_id=cf_constants.PAD_ID)
 
         # counterfactual flow
-        x_tilde, z_tilde, mask_tilde, y_tilde_hat = self.get_counterfactual_flow(x_cf, z, mask=mask)
+        x_tilde, z_tilde, mask_tilde, y_tilde_hat = self.get_counterfactual_flow(x_cf, z_cf, mask=mask_cf)
 
         # return everything as output (useful for computing the loss)
         return (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
@@ -299,7 +310,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             pred_e = pred_e * z_mask + pred_e_mask * (1 - z_mask)
 
         if self.selection_mask:
-            ext_mask *= (z_mask.squeeze(-1)[:, None, None, :] > 0.0)
+            ext_mask = (1.0 - z_mask.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
         if self.use_scalar_mix:
             pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
@@ -313,9 +324,11 @@ class CounterfactualRationalizer(BaseRationalizer):
         return z, y_hat
 
     def get_counterfactual_flow(self, x, z, mask=None):
+        import ipdb; ipdb.set_trace()
+
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'ids' else x
-        e_mask = self.cf_gen_emb_layer(torch.ones_like(e) * self.cf_mask_token_id)
+        e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.cf_mask_token_id)
 
         # fix inputs for t5
         if 't5' in self.cf_gen_arch:
@@ -331,7 +344,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         z_bar = (z_bar * mask.float()).unsqueeze(-1)
 
         # get mask for the generator LM
-        gen_ext_mask = ext_mask * (z_bar.squeeze(-1)[:, None, None, :] > 0.0).float()
+        # gen_ext_mask = ext_mask * (z_bar.squeeze(-1)[:, None, None, :] > 0.0).float()
+        gen_ext_mask = ext_mask
 
         # diff where
         s_bar = e * z_bar + e_mask * (1 - z_bar)
@@ -355,7 +369,7 @@ class CounterfactualRationalizer(BaseRationalizer):
                     encoder_outputs=cf_gen_enc_out,
                     attention_mask=mask,
                     output_scores=True,
-                    **self.cf_sample_kwargs
+                    **self.cf_generate_kwargs
                 )
             else:
                 # sample directly from the output layer
@@ -364,7 +378,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         else:
             # use the ST-gumbel-softmax trick
             logits = self.cf_gen_lm_head(h_tilde)
-            gen_ids = nn.functional.gumbel_softmax(logits, hard=True, dim=- 1)
+            gen_ids = nn.functional.gumbel_softmax(logits, hard=True, dim=-1)
 
         # compute log proba
         self.log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
@@ -380,7 +394,9 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         if self.cf_selection_faithfulness is True:
             # get the predictor embeddings corresponding to x_tilde
-            pred_e = self.cf_pred_emb_layer(x_tilde)
+            inputs_embeds = x_tilde @ self.cf_pred_emb_layer.word_embeddings.weight
+            pred_e = self.cf_pred_emb_layer(inputs_embeds=inputs_embeds)
+
         else:
             # get the generator hidden states
             pred_e = h_tilde
@@ -388,14 +404,15 @@ class CounterfactualRationalizer(BaseRationalizer):
         # get the replacement vector for non-selected positions
         pred_e_mask = torch.zeros_like(pred_e)
         if self.cf_selection_vector == 'mask':
-            pred_e_mask = self.cf_pred_emb_layer(torch.ones_like(x_tilde) * self.mask_token_id)
+            pred_e_mask = self.cf_pred_emb_layer(torch.ones_like(x_tilde).long() * self.mask_token_id)
 
         # input selection
-        s_tilde = pred_e * z_tilde + pred_e_mask * (1 - z_tilde)
+        z_mask_tilde = (z_tilde * mask_tilde.float()).unsqueeze(-1)
+        s_tilde = pred_e * z_mask_tilde + pred_e_mask * (1 - z_mask_tilde)
 
         # whether we want to mask out non-selected elements during self-attention
         if self.cf_selection_mask:
-            ext_mask_tilde *= (z_tilde.squeeze(-1)[:, None, None, :] > 0.0).float()
+            ext_mask_tilde = (1.0 - z_mask_tilde.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
         # pass the selected inputs through the encoder
         if self.cf_use_scalar_mix:
@@ -408,10 +425,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         summary = masked_average(pred_h, mask_tilde)
         y_tilde_hat = self.cf_output_layer(summary)
 
+        self.z_tilde = z_tilde
         return x_tilde, z_tilde, mask_tilde, y_tilde_hat
-
-    def get_loss(self, y_hat, y, prefix, mask=None):
-        pass
 
     def get_factual_loss(self, y_hat, y, prefix, mask=None):
         """
@@ -441,7 +456,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         return loss, stats
 
-    def get_cunterfactual_loss(self, y_hat, y, prefix, mask=None):
+    def get_counterfactual_loss(self, y_hat, y, prefix, mask=None):
         """
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -465,14 +480,14 @@ class CounterfactualRationalizer(BaseRationalizer):
         main_loss = loss
 
         if not self.is_multilabel:
-            stats["mse"] = loss.item()  # [1]
+            stats["cf_mse"] = loss.item()  # [1]
         else:
-            stats["criterion"] = loss.item()  # [1]
+            stats["cf_criterion"] = loss.item()  # [1]
 
         if self.cf_use_reinforce:
 
             # recover z
-            z = (1 - self.z_bar.squeeze(-1)) * mask.float()  # [B, T]
+            z = (1 - self.z_tilde.squeeze(-1)) * mask.float()  # [B, T]
 
             # get P(z = 0 | x) and P(z = 1 | x)
             logp_z0 = 1 - self.log_prob_x_tilde  # [B,T], log P(z = 0 | x)
@@ -489,7 +504,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
             # MSE with regularizers = neg reward
             obj = cost_vec.mean()
-            stats["obj"] = obj.item()
+            stats["cf_obj"] = obj.item()
 
             # add baseline
             if self.cf_use_baseline:
@@ -500,26 +515,315 @@ class CounterfactualRationalizer(BaseRationalizer):
             if not self.is_multilabel:
                 pred_diff = y_hat.max(dim=1)[0] - y_hat.min(dim=1)[0]
                 pred_diff = pred_diff.mean()
-                stats["pred_diff"] = pred_diff.item()
+                stats["cf_pred_diff"] = pred_diff.item()
 
             # generator cost
-            stats["cost_g"] = cost_logpz.item()
+            stats["cf_cost_g"] = cost_logpz.item()
 
             # predictor cost
-            stats["cost_p"] = loss.item()
+            stats["cf_cost_p"] = loss.item()
 
             main_loss = loss + cost_logpz
 
         # latent selection stats
-        num_0, num_c, num_1, total = get_z_stats(self.z_bar, mask)
-        stats[prefix + "_p0"] = num_0 / float(total)
-        stats[prefix + "_pc"] = num_c / float(total)
-        stats[prefix + "_p1"] = num_1 / float(total)
-        stats[prefix + "_selected"] = num_1
-        stats[prefix + "_total"] = float(total)
+        num_0, num_c, num_1, total = get_z_stats(self.z_tilde, mask)
+        stats[prefix + "_cf_p0"] = num_0 / float(total)
+        stats[prefix + "_cf_pc"] = num_c / float(total)
+        stats[prefix + "_cf_p1"] = num_1 / float(total)
+        stats[prefix + "_cf_selected"] = num_1
+        stats[prefix + "_cf_total"] = float(total)
 
-        stats["main_loss"] = main_loss.item()
+        stats["cf_main_loss"] = main_loss.item()
         return main_loss, stats
+
+    def training_step(self, batch: dict, batch_idx: int):
+        """
+        Compute forward-pass, calculate loss and log metrics.
+
+        :param batch: The dict output from the data module with the following items:
+            `input_ids`: torch.LongTensor of shape [B, T],
+            `lengths`: torch.LongTensor of shape [B]
+            `labels`: torch.LongTensor of shape [B, C]
+            `tokens`: list of strings
+        :param batch_idx: integer displaying index of this batch
+        :return: pytorch_lightning.Result log object
+        """
+        input_ids = batch["input_ids"]
+        cf_input_ids = batch["cf_input_ids"]
+        cf_counts = batch["cf_counts"]
+        labels = batch["labels"]
+        mask = input_ids != constants.PAD_ID
+        mask_cf = cf_input_ids != cf_constants.PAD_ID
+        prefix = "train"
+
+        (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+            input_ids,
+            cf_input_ids,
+            cf_counts,
+            mask=mask,
+            mask_cf=mask_cf,
+            current_epoch=self.current_epoch
+        )
+
+        # compute loss
+        y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
+        y = labels if not self.is_multilabel else labels.view(-1)
+        ff_loss, loss_stats = self.get_factual_loss(y_hat, y, prefix=prefix, mask=mask)
+
+        y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
+        import ipdb; ipdb.set_trace()
+        y_cf = 1 - y  # todo: write generic function
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
+
+        loss = ff_loss + self.cf_lbda * cf_loss
+
+        # logger=False because they are going to be logged via loss_stats
+        self.log("train_ff_ps", loss_stats["train_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
+        self.log("train_cf_ps", cf_loss_stats["train_cf_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
+        self.log("train_ff_sum_loss", ff_loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
+        self.log("train_cf_sum_loss", cf_loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
+        self.log("train_sum_loss", loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
+
+        if self.is_multilabel:
+            metrics_to_wandb = {
+                "train_ff_ps": loss_stats["train_ps"],
+                "train_cf_ps": cf_loss_stats["train_cf_ps"],
+                "train_ff_sum_loss": loss_stats["criterion"],
+                "train_cf_sum_loss": cf_loss_stats["cf_criterion"],
+            }
+        else:
+            metrics_to_wandb = {
+                "train_ff_ps": loss_stats["train_ps"],
+                "train_cf_ps": cf_loss_stats["train_cf_ps"],
+                "train_ff_sum_loss": loss_stats["mse"],
+                "train_cf_sum_loss": cf_loss_stats["cf_mse"],
+            }
+        if "cost_g" in loss_stats:
+            metrics_to_wandb["train_cost_g"] = loss_stats["cost_g"]
+        if "cost_g" in cf_loss_stats:
+            metrics_to_wandb["train_cf_cost_g"] = cf_loss_stats["cf_cost_g"]
+
+        self.logger.log_metrics(metrics_to_wandb, self.global_step)
+
+        # return the loss tensor to PTL
+        return {"loss": loss, "ps": loss_stats["train_ps"], "cf_ps": cf_loss_stats["train_ps"]}
+
+    def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
+        input_ids = batch["input_ids"]
+        cf_input_ids = batch["cf_input_ids"]
+        cf_counts = batch["cf_counts"]
+        labels = batch["labels"]
+        mask = input_ids != constants.PAD_ID
+        mask_cf = cf_input_ids != cf_constants.PAD_ID
+
+        # forward-pass
+        (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+            input_ids,
+            cf_input_ids,
+            cf_counts,
+            mask=mask,
+            mask_cf=mask_cf,
+            current_epoch=self.current_epoch
+        )
+
+        # compute loss
+        y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
+        y = labels if not self.is_multilabel else labels.view(-1)
+        ff_loss, ff_loss_stats = self.get_factual_loss(y_hat, y, prefix=prefix, mask=mask)
+        self.logger.agg_and_log_metrics(ff_loss_stats, step=None)
+
+        y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
+        import ipdb; ipdb.set_trace()
+        y_cf = 1 - y  # todo: write generic function
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
+        self.logger.agg_and_log_metrics(cf_loss_stats, step=None)
+
+        loss = ff_loss + self.cf_lbda * cf_loss
+
+        self.log(f"{prefix}_ff_sum_loss", ff_loss.item(), prog_bar=True, logger=True, on_step=False, on_epoch=True,)
+        self.log(f"{prefix}_cf_sum_loss", cf_loss.item(), prog_bar=True, logger=True, on_step=False, on_epoch=True,)
+        self.log(f"{prefix}_sum_loss", loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
+
+        z_1 = (z > 0).long()  # non-zero probs are considered selections for sparsemap
+        ids_rationales, rationales = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
+        pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+
+        # output to be stacked across iterations
+        output = {
+            f"{prefix}_sum_loss": loss.item(),
+            f"{prefix}_ps": ff_loss_stats[prefix + "_ps"],
+            f"{prefix}_ids_rationales": ids_rationales,
+            f"{prefix}_rationales": rationales,
+            f"{prefix}_pieces": pieces,
+            f"{prefix}_tokens": batch["tokens"],
+            f"{prefix}_z": z,
+            f"{prefix}_predictions": y_hat,
+            f"{prefix}_labels": batch["labels"].tolist(),
+            f"{prefix}_lengths": batch["lengths"].tolist(),
+        }
+
+        if "annotations" in batch.keys():
+            output[f"{prefix}_annotations"] = batch["annotations"]
+
+        if "mse" in ff_loss_stats.keys():
+            output[f"{prefix}_mse"] = ff_loss_stats["mse"]
+
+        return output
+
+    def _shared_eval_epoch_end(self, outputs: list, prefix: str):
+        """
+        PTL hook. Perform validation at the end of an epoch.
+
+        :param outputs: list of dicts representing the stacked outputs from validation_step
+        :param prefix: `val` or `test`
+        """
+        # assume that `outputs` is a list containing dicts with the same keys
+        stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
+
+        # average across batches
+        avg_outputs = {
+            f"avg_{prefix}_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
+            f"avg_{prefix}_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
+        }
+
+        shell_logger.info(
+            f"Avg {prefix} sum loss: {avg_outputs[f'avg_{prefix}_sum_loss']:.4}"
+        )
+        shell_logger.info(f"Avg {prefix} ps: {avg_outputs[f'avg_{prefix}_ps']:.4}")
+
+        dict_metrics = {
+            f"avg_{prefix}_ps": avg_outputs[f"avg_{prefix}_ps"],
+            f"avg_{prefix}_sum_loss": avg_outputs[f"avg_{prefix}_sum_loss"],
+        }
+
+        # log rationales
+        from random import shuffle
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        if prefix != 'test':
+            shuffle(idxs)
+            idxs = idxs[:10]
+        else:
+            idxs = idxs[:100]
+        select = lambda v: [v[i] for i in idxs]
+        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
+        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+
+        # save rationales
+        if self.hparams.save_rationales:
+            scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
+            lens = unroll(stacked_outputs[f"{prefix}_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+            shell_logger.info(f'Saving rationales in {filename}...')
+            save_rationales(filename, scores, lens)
+
+        # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
+        if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+            rat_metrics = evaluate_rationale(
+                stacked_outputs["test_ids_rationales"],
+                stacked_outputs["test_annotations"],
+                stacked_outputs["test_lengths"],
+            )
+            shell_logger.info(
+                f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"
+            )
+            shell_logger.info(
+                f"Rationales macro recall: {rat_metrics[f'macro_recall']:.4}"
+            )
+            shell_logger.info(f"Rationales macro f1: {rat_metrics[f'f1_score']:.4}")
+
+        # log classification metrics
+        if self.is_multilabel:
+            preds = torch.argmax(
+                torch.cat(stacked_outputs[f"{prefix}_predictions"]), dim=-1
+            )
+            labels = torch.tensor(
+                [
+                    item
+                    for sublist in stacked_outputs[f"{prefix}_labels"]
+                    for item in sublist
+                ],
+                device=preds.device,
+            )
+            if prefix == "val":
+                accuracy = self.val_accuracy(preds, labels)
+                precision = self.val_precision(preds, labels)
+                recall = self.val_recall(preds, labels)
+                f1_score = 2 * precision * recall / (precision + recall)
+            else:
+                accuracy = self.test_accuracy(preds, labels)
+                precision = self.test_precision(preds, labels)
+                recall = self.test_recall(preds, labels)
+                f1_score = 2 * precision * recall / (precision + recall)
+
+            dict_metrics[f"{prefix}_precision"] = precision
+            dict_metrics[f"{prefix}_recall"] = recall
+            dict_metrics[f"{prefix}_f1score"] = f1_score
+            dict_metrics[f"{prefix}_accuracy"] = accuracy
+
+            shell_logger.info(f"{prefix} accuracy: {accuracy:.4}")
+            shell_logger.info(f"{prefix} precision: {precision:.4}")
+            shell_logger.info(f"{prefix} recall: {recall:.4}")
+            shell_logger.info(f"{prefix} f1: {f1_score:.4}")
+
+            self.log(
+                f"{prefix}_f1score",
+                dict_metrics[f"{prefix}_f1score"],
+                prog_bar=False,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+            )
+
+        else:
+            avg_outputs[f"avg_{prefix}_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
+            shell_logger.info(
+                f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
+            )
+            dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
+
+            self.log(
+                f"{prefix}_MSE",
+                dict_metrics[f"avg_{prefix}_mse"],
+                prog_bar=False,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+            )
+
+        self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
+
+        self.log(
+            f"avg_{prefix}_sum_loss",
+            dict_metrics[f"avg_{prefix}_sum_loss"],
+            prog_bar=False,
+            logger=True,
+            on_step=False,
+            on_epoch=True,
+        )
+
+        if self.is_multilabel:
+            output = {
+                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
+                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
+                f"{prefix}_precision": precision,
+                f"{prefix}_recall": recall,
+                f"{prefix}_f1score": f1_score,
+                f"{prefix}_accuracy": accuracy,
+            }
+        else:
+            output = {
+                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
+                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
+                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
+            }
+
+        return output
 
 
 def make_input_for_t5(e, z, mask):
@@ -574,4 +878,3 @@ def repeat_interleave_and_pad(x, counts, pad_id=0):
     x_new = [x[i].repeat_interleave(counts[i], dim=-1) for i in range(len(counts))]
     x_new = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=pad_id)
     return x_new.to(x.device)
-

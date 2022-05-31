@@ -14,7 +14,7 @@ from rationalizers.data_modules.utils import remap_input_to_cf_vocab
 class ImdbDataModule(BaseDataModule):
     """DataModule for IMDB Dataset."""
 
-    def __init__(self, d_params: dict, tokenizer: object = None, cf_tokenizer: object = None):
+    def __init__(self, d_params: dict, tokenizer: object = None, cf_tokenizer: object = None, set_cf_inputs: bool = False):
         super().__init__(d_params)
         # hard-coded stuff
         self.path = "imdb"  # hf_datasets will handle everything
@@ -53,6 +53,7 @@ class ImdbDataModule(BaseDataModule):
         )
         self.cf_tokenizer = cf_tokenizer
         self.cf_tokenizer_cls = self.tokenizer_cls
+        self.set_cf_inputs = set_cf_inputs
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         """
@@ -87,7 +88,6 @@ class ImdbDataModule(BaseDataModule):
             "tokens": tokens,
             "labels": labels,
         }
-
         # check if we have counterfactual inputs and do the same for them
         has_cf_inputs = "cf_input_ids" in collated_samples.keys()
         if has_cf_inputs:
@@ -98,8 +98,7 @@ class ImdbDataModule(BaseDataModule):
 
             batch["cf_input_ids"] = cf_input_ids
             batch["cf_lengths"] = cf_lengths
-            batch["cf_counts"] = [None] * len(cf_lengths)
-            import ipdb; ipdb.set_trace()
+            batch["cf_counts"] = [None] * len(cf_input_ids)
             if self.tokenizer != self.cf_tokenizer:
                 batch["cf_counts"] = remap_input_to_cf_vocab(input_ids, self.tokenizer, self.cf_tokenizer)
 
@@ -112,12 +111,17 @@ class ImdbDataModule(BaseDataModule):
             save_infos=True,
         )
 
-    def setup(self, stage: str = None, set_cf_inputs: bool = False):
+    def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(path=self.path,)
         modified_dataset = hf_datasets.load_dataset("imdb")["train"].train_test_split(test_size=0.1)
         self.dataset["train"] = modified_dataset["train"]
         self.dataset["validation"] = modified_dataset["test"]
+
+        self.dataset["train"] = self.dataset["train"].select(range(64))
+        self.dataset["validation"] = self.dataset["validation"].select(range(64))
+        del self.dataset['test']
+        del self.dataset['unsupervised']
 
         # build tokenize rand label encoder
         if self.tokenizer is None:
@@ -126,20 +130,20 @@ class ImdbDataModule(BaseDataModule):
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # do the same for the counterfactual tokenizer
-        if self.cf_tokenizer is None and set_cf_inputs:
+        if self.cf_tokenizer is None and self.set_cf_inputs:
             tok_samples = chain(self.dataset["train"]["text"],)
             self.cf_tokenizer = self.cf_tokenizer_cls(tok_samples)
 
         # function to map strings to ids
         def _encode(example: dict):
-            if set_cf_inputs:
+            if self.set_cf_inputs:
                 example["cf_input_ids"] = self.cf_tokenizer.encode(example["text"].strip())
             example["input_ids"] = self.tokenizer.encode(example["text"].strip())
             return example
 
         # function to filter out examples longer than max_seq_len
         def _filter(example: dict):
-            if set_cf_inputs:
+            if self.set_cf_inputs:
                 return max(len(example["input_ids"]), len(example["cf_input_ids"])) <= self.max_seq_len
             return len(example["input_ids"]) <= self.max_seq_len
 
@@ -150,6 +154,6 @@ class ImdbDataModule(BaseDataModule):
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=["input_ids", "cf_input_ids", "label"] if set_cf_inputs else ["input_ids", "label"],
+            columns=["input_ids", "cf_input_ids", "label"] if self.set_cf_inputs else ["input_ids", "label"],
             output_all_columns=True,
         )

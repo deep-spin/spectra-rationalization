@@ -37,7 +37,7 @@ def run(args):
 
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
-    dm = dm_cls(d_params=dict_args, tokenizer=tokenizer, cf_tokenizer=cf_tokenizer)
+    dm = dm_cls(d_params=dict_args, tokenizer=tokenizer, cf_tokenizer=cf_tokenizer, set_cf_inputs=True)
     if args.factual_ckpt is not None:
         # load factual rationalizer tokenizer and label encoder
         dm.load_encoders(
@@ -47,7 +47,7 @@ def run(args):
             load_label_encoder=args.load_label_encoder,
         )
     dm.prepare_data()
-    dm.setup(prepare_cf_inputs=True)
+    dm.setup()
 
     shell_logger.info("Building board loggers...")
     logger = setup_wandb_logger(args.default_root_dir)
