@@ -14,7 +14,7 @@ from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.scalar_mix import ScalarMixWithDropout
 from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
 from rationalizers.utils import get_z_stats, freeze_module, masked_average, get_rationales, unroll, get_html_rationales, \
-    save_rationales
+    save_rationales, save_counterfactuals
 
 shell_logger = logging.getLogger(__name__)
 
@@ -324,8 +324,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         return z, y_hat
 
     def get_counterfactual_flow(self, x, z, mask=None):
-        import ipdb; ipdb.set_trace()
-
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'ids' else x
         e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.cf_mask_token_id)
@@ -530,8 +528,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         stats[prefix + "_cf_p0"] = num_0 / float(total)
         stats[prefix + "_cf_pc"] = num_c / float(total)
         stats[prefix + "_cf_p1"] = num_1 / float(total)
-        stats[prefix + "_cf_selected"] = num_1
-        stats[prefix + "_cf_total"] = float(total)
+        stats[prefix + "_cf_ps"] = (num_c + num_1) / float(total)
 
         stats["cf_main_loss"] = main_loss.item()
         return main_loss, stats
@@ -571,7 +568,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         ff_loss, loss_stats = self.get_factual_loss(y_hat, y, prefix=prefix, mask=mask)
 
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
-        import ipdb; ipdb.set_trace()
         y_cf = 1 - y  # todo: write generic function
         cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
 
@@ -606,7 +602,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.logger.log_metrics(metrics_to_wandb, self.global_step)
 
         # return the loss tensor to PTL
-        return {"loss": loss, "ps": loss_stats["train_ps"], "cf_ps": cf_loss_stats["train_ps"]}
+        return {"loss": loss, "ps": loss_stats["train_ps"], "cf_ps": cf_loss_stats["train_cf_ps"]}
 
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
         input_ids = batch["input_ids"]
@@ -633,7 +629,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.logger.agg_and_log_metrics(ff_loss_stats, step=None)
 
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
-        import ipdb; ipdb.set_trace()
         y_cf = 1 - y  # todo: write generic function
         cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
         self.logger.agg_and_log_metrics(cf_loss_stats, step=None)
@@ -648,6 +643,9 @@ class CounterfactualRationalizer(BaseRationalizer):
         ids_rationales, rationales = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
         pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
+        gen_ids = x_tilde.argmax(dim=-1)
+        cfs = [self.cf_gen_tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
+
         # output to be stacked across iterations
         output = {
             f"{prefix}_sum_loss": loss.item(),
@@ -658,8 +656,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             f"{prefix}_tokens": batch["tokens"],
             f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
-            f"{prefix}_labels": batch["labels"].tolist(),
+            f"{prefix}_labels": y.tolist(),
             f"{prefix}_lengths": batch["lengths"].tolist(),
+            f"{prefix}_cfs": cfs,
+            f"{prefix}_cf_labels": y_cf.tolist(),
+            f"{prefix}_cf_predictions": y_tilde_hat,
+            f"{prefix}_cf_z": z_tilde,
+            f"{prefix}_cf_lengths": batch["cf_lengths"].tolist(),
         }
 
         if "annotations" in batch.keys():
@@ -721,6 +724,23 @@ class CounterfactualRationalizer(BaseRationalizer):
             filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
             shell_logger.info(f'Saving rationales in {filename}...')
             save_rationales(filename, scores, lens)
+
+        # log counterfactuals
+        cfs = select(unroll(stacked_outputs[f"{prefix}_cfs"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_cf_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_cf_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_cf_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_cf_lengths"]))
+        html_string = get_html_rationales(cfs, scores, gold, pred, lens)
+        self.logger.experiment.log({f"{prefix}_counterfactuals": wandb.Html(html_string)})
+
+        # save rationales
+        if self.hparams.save_counterfactuals:
+            pieces = unroll(stacked_outputs[f"{prefix}_cfs"])
+            lens = unroll(stacked_outputs[f"{prefix}_cf_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_counterfactuals.txt')
+            shell_logger.info(f'Saving counterfactuals in {filename}...')
+            save_counterfactuals(filename, pieces, lens)
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():

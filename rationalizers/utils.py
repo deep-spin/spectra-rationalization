@@ -314,3 +314,11 @@ def save_rationales(filename, all_scores, all_lengths):
         text = ' '.join(['{:.4f}'.format(z) for z in scores[:leng].tolist()])
         f.write(text + '\n')
     f.close()
+
+
+def save_counterfactuals(filename, all_pieces, all_lengths):
+    f = open(filename, 'w', encoding='utf8')
+    for pieces, leng in zip(all_pieces, all_lengths):
+        text = ' '.join(pieces[:leng].tolist())
+        f.write(text + '\n')
+    f.close()
