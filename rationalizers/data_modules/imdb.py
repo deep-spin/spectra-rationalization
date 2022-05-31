@@ -26,6 +26,7 @@ class ImdbDataModule(BaseDataModule):
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
+        self.max_dataset_size = d_params.get("max_dataset_size", None)
 
         # objects
         self.dataset = None
@@ -118,10 +119,14 @@ class ImdbDataModule(BaseDataModule):
         self.dataset["train"] = modified_dataset["train"]
         self.dataset["validation"] = modified_dataset["test"]
 
-        self.dataset["train"] = self.dataset["train"].select(range(64))
-        self.dataset["validation"] = self.dataset["validation"].select(range(64))
-        del self.dataset['test']
+        # remove unnecessary data
         del self.dataset['unsupervised']
+
+        # cap dataset size - useful for quick testing
+        if self.max_dataset_size is not None:
+            self.dataset["train"] = self.dataset["train"].select(range(self.max_dataset_size))
+            self.dataset["validation"] = self.dataset["validation"].select(range(self.max_dataset_size))
+            self.dataset["test"] = self.dataset["test"].select(range(self.max_dataset_size))
 
         # build tokenize rand label encoder
         if self.tokenizer is None:

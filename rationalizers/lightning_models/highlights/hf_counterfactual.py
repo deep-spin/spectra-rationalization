@@ -66,7 +66,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_shared_gen_pred = h_params.get("cf_shared_gen_pred", False)
         self.cf_use_scalar_mix = h_params.get("cf_use_scalar_mix", True)
         self.cf_dropout = h_params.get("cf_dropout", 0.1)
-        self.cf_input_space = h_params.get("cf_input_space", 'ids')
+        self.cf_input_space = h_params.get("cf_input_space", 'embedding')
         self.cf_selection_vector = h_params.get("cf_selection_vector", 'zero')
         self.cf_selection_mask = h_params.get("cf_selection_mask", True)
         self.cf_selection_faithfulness = h_params.get("cf_selection_faithfulness", True)
@@ -142,9 +142,10 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.z_tilde = None
 
         # for reinforce
-        self.log_prob_x_tilde = None
         self.n_points = 0
         self.mean_baseline = 0
+        self.cf_log_prob_x_tilde = None
+        self.cf_logits = None
 
         # counterfactual generator module
         if 't5' in self.cf_gen_arch:
@@ -340,7 +341,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
     def get_counterfactual_flow(self, x, z, mask=None):
         # prepare input for the generator LM
-        e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'ids' else x
+        e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
         e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.cf_mask_token_id)
 
         # fix inputs for t5
@@ -388,13 +389,24 @@ class CounterfactualRationalizer(BaseRationalizer):
                 # sample directly from the output layer
                 logits = self.cf_gen_lm_head(h_tilde)
                 gen_ids = logits.argmax(dim=-1)
+
+                # get gen_ids only for <mask> positions
+                z_0 = (z_bar == 0).squeeze(-1).long()
+                gen_ids = z_0 * gen_ids + (1 - z_0) * x
+
         else:
             # use the ST-gumbel-softmax trick
             logits = self.cf_gen_lm_head(h_tilde)
             gen_ids = nn.functional.gumbel_softmax(logits, hard=True, dim=-1)
 
+            # get gen_ids only for <mask> positions
+            z_0 = (z_bar == 0).squeeze(-1).long()
+            x_one_hot = nn.functional.one_hot(x, num_classes=gen_ids.shape[-1])
+            gen_ids = z_0 * gen_ids + (1 - z_0) * x_one_hot
+
         # compute log proba
-        self.log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
+        self.cf_logits = logits
+        self.cf_log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         # expand z to account for the new tokens
         x_tilde = gen_ids
@@ -417,7 +429,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         # get the replacement vector for non-selected positions
         pred_e_mask = torch.zeros_like(pred_e)
         if self.cf_selection_vector == 'mask':
-            pred_e_mask = self.cf_pred_emb_layer(torch.ones_like(x_tilde).long() * self.mask_token_id)
+            pred_e_mask = self.cf_pred_emb_layer(torch.ones_like(x_tilde).long() * self.cf_mask_token_id)
 
         # input selection
         z_mask_tilde = (z_tilde * mask_tilde.float()).unsqueeze(-1)
@@ -498,22 +510,23 @@ class CounterfactualRationalizer(BaseRationalizer):
             stats["cf_criterion"] = loss.item()  # [1]
 
         if self.cf_use_reinforce:
+            # log P(x_tilde | s; phi)
+            logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+            logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
+            logp_xtilde = logp_xtilde.masked_fill(~mask, 0)
 
-            # recover z
-            z = (1 - self.z_tilde.squeeze(-1)) * mask.float()  # [B, T]
-
-            # get P(z = 0 | x) and P(z = 1 | x)
-            logp_z0 = 1 - self.log_prob_x_tilde  # [B,T], log P(z = 0 | x)
-            logp_z1 = self.log_prob_x_tilde  # [B,T], log P(z = 1 | x)
-
-            # compute log p(z|x) for each case (z==0 and z==1) and mask
-            logpz = torch.where(z == 0, logp_z0, logp_z1)
-            logpz = torch.where(mask, logpz, logpz.new_zeros([1]))
+            # z = self.z_tilde
+            # logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+            # logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
+            # logp_xtilde_z0 = 1 - logp_xtilde
+            # logp_xtilde_z1 = logp_xtilde
+            # logp_xtilde = torch.where(z == 0, logp_xtilde_z0, logp_xtilde_z1)
+            # logp_xtilde = logp_xtilde.masked_fill(~mask, 0)
 
             # compute generator loss
             cost_vec = loss_vec.detach()
             # cost_vec is neg reward
-            cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
+            cost_logpz = ((cost_vec - self.mean_baseline) * logp_xtilde.sum(1)).mean(0)
 
             # MSE with regularizers = neg reward
             obj = cost_vec.mean()

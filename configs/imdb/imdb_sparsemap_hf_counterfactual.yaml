@@ -19,7 +19,8 @@ train:
     batch_size: 8                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
-    max_seq_len: 512
+    max_seq_len: 512                # pretrained transformer limitation
+    # max_dataset_size: 64            # for quick testing
 
     # early stopping
     monitor: 'val_f1score'     # quantity to be monitored
@@ -30,8 +31,8 @@ train:
     model: 'hf_counterfactual'
 
     # factual flow
-    factual_ckpt: 'experiments/imdb-sparsemap-hf/version22spom5n/checkpoints/epoch=3.ckpt'
-    load_tokenizer: True
+    factual_ckpt: 'experiments/imdb-sparsemap-hf/version3vriso0o/checkpoints/epoch=8.ckpt'
+    load_tokenizer: False
     load_label_encoder: True
     tokenizer: 'bert-base-cased'
     gen_arch: 'bert-base-cased'   # distilbert-base-cased
@@ -40,17 +41,19 @@ train:
     pred_emb_requires_grad: False
     gen_encoder_requires_grad: False
     pred_encoder_requires_grad: False
+    pred_output_requires_grad: False
     shared_gen_pred: False
     explainer: 'sparsemap'
     explainer_pre_mlp: True
+    explainer_requires_grad: False
     sparsemap_budget: 20
     sparsemap_temperature: 0.01
     use_scalar_mix: True
     dropout: 0.1
     selection_space: 'embedding'
-    selection_vector: 'mask'
+    selection_vector: 'zero'
     selection_faithfulness: True
-    selection_mask: True
+    selection_mask: False
 
     # counterfactual flow
     cf_tokenizer: 'bert-base-cased'
@@ -60,12 +63,13 @@ train:
     cf_pred_emb_requires_grad: False
     cf_gen_encoder_requires_grad: False
     cf_pred_encoder_requires_grad: True
+    cf_pred_output_requires_grad: True
     cf_shared_gen_pred: False
     cf_use_scalar_mix: True
     cf_dropout: 0.1
-    cf_input_space: 'ids'
+    cf_input_space: 'embedding'
     cf_selection_vector: 'zero'
-    cf_selection_mask: True
+    cf_selection_mask: False
     cf_selection_faithfulness: True
     cf_use_reinforce: False
     cf_use_baseline: False
@@ -73,8 +77,8 @@ train:
     # cf_generate_kwargs:
 
     # both flows
-    share_tokenizers: True
-    share_preds: False
+    share_tokenizers: True  # use the same tokenizer for both flows (avoid double loading)
+    share_preds: False      # share predictor between flows
     temperature: 1.0
 
     # model: optimizer
