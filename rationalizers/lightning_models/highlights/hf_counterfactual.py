@@ -46,6 +46,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", False)
         self.gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
         self.pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)
+        self.pred_output_requires_grad = h_params.get("pred_output_requires_grad", True)
         self.shared_gen_pred = h_params.get("shared_gen_pred", False)
         self.use_scalar_mix = h_params.get("use_scalar_mix", True)
         self.dropout = h_params.get("dropout", 0.1)
@@ -53,6 +54,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.selection_vector = h_params.get("selection_vector", 'zero')
         self.selection_mask = h_params.get("selection_mask", True)
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
+
         # counterfactual:
         self.cf_gen_arch = h_params.get("cf_gen_arch", "bert-base-multilingual-cased")
         self.cf_pred_arch = h_params.get("cf_pred_arch", "bert-base-multilingual-cased")
@@ -60,6 +62,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_pred_emb_requires_grad = h_params.get("cf_pred_emb_requires_grad", False)
         self.cf_gen_encoder_requires_grad = h_params.get("cf_gen_encoder_requires_grad", True)
         self.cf_pred_encoder_requires_grad = h_params.get("cf_pred_encoder_requires_grad", True)
+        self.cf_pred_output_requires_grad = h_params.get("cf_pred_output_requires_grad", True)
         self.cf_shared_gen_pred = h_params.get("cf_shared_gen_pred", False)
         self.cf_use_scalar_mix = h_params.get("cf_use_scalar_mix", True)
         self.cf_dropout = h_params.get("cf_dropout", 0.1)
@@ -74,6 +77,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         # both:
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
+        self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
         self.temperature = h_params.get("temperature", 1.0)
         self.share_preds = h_params.get("share_preds", True)
 
@@ -216,6 +220,17 @@ class CounterfactualRationalizer(BaseRationalizer):
             freeze_module(self.cf_gen_encoder)
         if not self.cf_pred_encoder_requires_grad:
             freeze_module(self.cf_pred_encoder)
+
+        # freeze output layers
+        if not self.pred_output_requires_grad:
+            freeze_module(self.output_layer)
+        if not self.cf_pred_output_requires_grad:
+            freeze_module(self.cf_output_layer)
+
+        # freeze explainer
+        if not self.explainer_requires_grad:
+            freeze_module(self.explainer_mlp)
+            freeze_module(self.explainer)
 
         # shared generator and predictor for factual flow
         if self.shared_gen_pred:
@@ -643,7 +658,9 @@ class CounterfactualRationalizer(BaseRationalizer):
         ids_rationales, rationales = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
         pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
-        gen_ids = x_tilde.argmax(dim=-1)
+        # todo: correct gen_ids for t5
+        z_1 = (z_tilde > 0).long()
+        gen_ids = z_1 * x_tilde.argmax(dim=-1) + (1 - z_1) * input_ids
         cfs = [self.cf_gen_tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
 
         # output to be stacked across iterations
