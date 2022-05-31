@@ -400,7 +400,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             gen_ids = nn.functional.gumbel_softmax(logits, hard=True, dim=-1)
 
             # get gen_ids only for <mask> positions
-            z_0 = (z_bar == 0).squeeze(-1).long()
+            z_0 = (z_bar == 0).long()
             x_one_hot = nn.functional.one_hot(x, num_classes=gen_ids.shape[-1])
             gen_ids = z_0 * gen_ids + (1 - z_0) * x_one_hot
 
