@@ -55,7 +55,7 @@ def run(args):
     if "ckpt" in dict_args.keys():
         shell_logger.info("Building model: {}...".format(args.model))
         model_cls = available_models[args.model]
-        model = model_cls(dm.tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args)
+        model = model_cls(dm.tokenizer, dm.cf_tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args)
         trainer = Trainer(resume_from_checkpoint=args.ckpt)
     else:
         shell_logger.info("Building callbacks...")
@@ -104,7 +104,7 @@ def run(args):
         shell_logger.info("Building model: {}...".format(args.model))
         model_cls = available_models[args.model]
         model = model_cls(
-            dm.tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args
+            dm.tokenizer, dm.cf_tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args
         )
 
         if args.factual_ckpt is not None:

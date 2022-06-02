@@ -35,21 +35,29 @@ def remap_input_to_cf_vocab(input_ids, tokenizer, cf_tokenizer):
     Returns:
         cf_input_counts: the frequency that each input_id will be repeated to
     """
+    ff_special_tokens = tokenizer.special_tokens_map.values()
+    ff_has_bos = tokenizer.cls_token is not None or tokenizer.bos_token is not None
+    ff_has_eos = tokenizer.sep_token is not None or tokenizer.eos_token is not None
+    cf_has_bos = cf_tokenizer.cls_token is not None or cf_tokenizer.bos_token is not None
+    cf_has_eos = cf_tokenizer.sep_token is not None or cf_tokenizer.eos_token is not None
+    ff_bos_token = tokenizer.cls_token if tokenizer.cls_token is not None else tokenizer.bos_token
+    ff_eos_token = tokenizer.sep_token if tokenizer.sep_token is not None else tokenizer.eos_token
     cf_input_counts = []
     for x_s in tokenizer.batch_decode(input_ids):
         x_counts_inner = []
         for word in x_s.split():
-            # handle special tokens (CLS, SEP, PAD, UNK)
-            if word in [tokenizer.cls_token, tokenizer.sep_token, tokenizer.pad_token, tokenizer.unk_token]:
-                p_f = []
-                p_cf = []
+            # handle special tokens (e.g., CLS, SEP, PAD, UNK)
+            if word in ff_special_tokens:
+                p_f = [0]
+                p_cf = [0]
             else:
-                a = 0 if tokenizer.cls_token is None and tokenizer.bos_token is None else 1
-                b = None if tokenizer.eos_token is None and tokenizer.sep_token is None else -1
+                a = 1 if ff_has_bos else 0
+                b = -1 if ff_has_eos else None
                 p_f = tokenizer(word)['input_ids'][a:b]  # remove [cls] and [sep]
-                a = 0 if cf_tokenizer.cls_token is None and cf_tokenizer.bos_token is None else 1
-                b = None if cf_tokenizer.eos_token is None and cf_tokenizer.sep_token is None else -1
+                a = 1 if cf_has_bos else 0
+                b = -1 if cf_has_eos else None
                 p_cf = cf_tokenizer(word)['input_ids'][a:b]  # remove <s> and </s>
+
             # set c so that we repeat last piece
             if len(p_f) < len(p_cf):
                 c = [1] * (len(p_f) - 1) + [1 + len(p_cf) - len(p_f)]
@@ -58,13 +66,22 @@ def remap_input_to_cf_vocab(input_ids, tokenizer, cf_tokenizer):
                 c = [1] * len(p_cf) + [0]*(len(p_f) - len(p_cf))
             # do nothing, they match sizes
             else:
-                c = [1] * len(p_f)
+                if not cf_has_bos and word == ff_bos_token:
+                    c = [0]  # drop [CLS] since some models dont have a bos token
+                elif not cf_has_eos and word == ff_eos_token:
+                    c = [0]  # drop [SEP] since some models dont have a eos token
+                else:
+                    c = [1] * len(p_f)
             x_counts_inner.extend(c)
         cf_input_counts.append(torch.as_tensor(x_counts_inner))
     return cf_input_counts
 
 
 def remap_input_to_cf_vocab_brute_force(bert_tokenizer, t5_tokenizer, x, z, mask):
+    """
+    Do the remapping at the piece level instead of the word level.
+    This method leads to inputs with more word pieces.
+    """
     x_new = []
     x_counts = []
     for x_i in x:

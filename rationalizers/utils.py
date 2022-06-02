@@ -282,9 +282,6 @@ def masked_average(tensor, mask):
     return tensor_mean
 
 
-
-
-
 def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
     def colorize_two_way(tokens, scores, gold_l, pred_l, leng):
         template_pos = '<span style="color: black; background-color: rgba(0, 255, 0, {}); ' \

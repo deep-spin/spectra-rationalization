@@ -138,7 +138,7 @@ class HFRationalizer(BaseRationalizer):
         z = self.explainer(gen_h, mask)
         z_mask = (z * mask.float()).unsqueeze(-1)
 
-        if self.selection_faithfulness is True:
+        if self.selection_faithfulness:
             pred_e = self.pred_emb_layer(x)
         else:
             pred_e = gen_h
