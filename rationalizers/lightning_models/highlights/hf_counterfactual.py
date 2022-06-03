@@ -190,7 +190,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         else:
             self.cf_pred_hf = self.cf_gen_hf if self.cf_shared_gen_pred else AutoModel.from_pretrained(self.cf_pred_arch)
             self.cf_pred_hidden_size = self.cf_pred_hf.config.hidden_size
-            self.cf_pred_emb_layer = self.cf_pred_hf.embeddings
+            self.cf_pred_emb_layer = self.cf_pred_hf.embeddings if 't5' not in self.cf_pred_arch else self.cf_pred_hf.shared
             self.cf_pred_encoder = self.cf_pred_hf.encoder
             self.cf_pred_scalar_mix = ScalarMixWithDropout(
                 mixture_size=self.cf_pred_hf.config.num_hidden_layers+1,
@@ -323,10 +323,20 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True).hidden_states
-            gen_h = self.gen_scalar_mix(gen_h, mask)
+            if 't5' in self.gen_arch:
+                gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask, output_hidden_states=True)
+            else:
+                gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True)
+            gen_h = self.gen_scalar_mix(gen_h.hidden_states, mask)
         else:
-            gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
+            # selected_layers = list(map(int, self.selected_layers.split(',')))
+            # gen_h = torch.stack(self.gen_encoder(gen_e, ext_mask).hidden_states)
+            # gen_h = gen_h[selected_layers].mean(dim=0)
+            if 't5' in self.gen_arch:
+                gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask)
+            else:
+                gen_h = self.gen_encoder(gen_e, ext_mask)
+            gen_h = gen_h.last_hidden_state
 
         if self.explainer_pre_mlp:
             gen_h = self.explainer_mlp(gen_h)
@@ -355,17 +365,24 @@ class CounterfactualRationalizer(BaseRationalizer):
             ext_mask = (1.0 - z_mask.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
         if self.pred_arch == 'lstm':
-            _, pred_h = self.pred_encoder(pred_e, mask)
+            _, summary = self.pred_encoder(pred_e, mask)
         elif self.pred_arch == 'masked_average':
-            pred_h = self.pred_encoder(pred_e, mask)
+            summary = self.pred_encoder(pred_e, mask)
         else:
             if self.use_scalar_mix:
-                pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
-                pred_h = self.pred_scalar_mix(pred_h, mask)
+                if 't5' in self.pred_arch:
+                    pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask, output_hidden_states=True)
+                else:
+                    pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True)
+                pred_h = self.pred_scalar_mix(pred_h.hidden_states, mask)
             else:
-                pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
+                if 't5' in self.pred_arch:
+                    pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask)
+                else:
+                    pred_h = self.pred_encoder(pred_e, ext_mask)
+                pred_h = pred_h.last_hidden_state
+            summary = masked_average(pred_h, mask)
 
-        summary = masked_average(pred_h, mask)
         y_hat = self.output_layer(summary)
 
         return z, y_hat
@@ -480,7 +497,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         ext_mask_tilde = (1.0 - mask_tilde[:, None, None, :].to(self.dtype)) * -10000.0
 
         # fixme: we need to remap t5 generated ids to bert ids or use t5 embeddings
-        # in case of using pretrained transformers as the counterfactual predictor
+        #        in case of using pretrained transformers as the counterfactual predictor
         if self.cf_selection_faithfulness:
             # get the predictor embeddings corresponding to x_tilde
             if self.cf_use_reinforce:
@@ -525,10 +542,17 @@ class CounterfactualRationalizer(BaseRationalizer):
         else:
             # pass the selected inputs through the encoder
             if self.cf_use_scalar_mix:
-                pred_h = self.cf_pred_encoder(s_tilde, ext_mask_tilde, output_hidden_states=True).hidden_states
-                pred_h = self.cf_pred_scalar_mix(pred_h, mask_tilde)
+                if 't5' in self.cf_pred_arch:
+                    pred_h = self.cf_pred_encoder(inputs_embeds=s_tilde, attention_mask=mask_tilde, output_hidden_states=True)
+                else:
+                    pred_h = self.cf_pred_encoder(s_tilde, ext_mask_tilde, output_hidden_states=True)
+                pred_h = self.cf_pred_scalar_mix(pred_h.hidden_states, mask_tilde)
             else:
-                pred_h = self.cf_pred_encoder(s_tilde, ext_mask_tilde).last_hidden_state
+                if 't5' in self.cf_pred_arch:
+                    pred_h = self.cf_pred_encoder(inputs_embeds=s_tilde, attention_mask=mask_tilde)
+                else:
+                    pred_h = self.cf_pred_encoder(s_tilde, ext_mask_tilde)
+                pred_h = pred_h.last_hidden_state
             # get predictions
             summary = masked_average(pred_h, mask_tilde)
 

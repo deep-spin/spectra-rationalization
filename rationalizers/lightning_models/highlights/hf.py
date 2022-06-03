@@ -7,6 +7,7 @@ from transformers import AutoModel
 from rationalizers.explainers import available_explainers
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
 from rationalizers.modules.scalar_mix import ScalarMixWithDropout
+from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
 from rationalizers.utils import get_z_stats, freeze_module, masked_average
 
 shell_logger = logging.getLogger(__name__)
@@ -50,15 +51,34 @@ class HFRationalizer(BaseRationalizer):
 
         # generator module
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
-        self.gen_emb_layer = self.gen_hf.embeddings
+        self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
         self.gen_encoder = self.gen_hf.encoder
         self.gen_hidden_size = self.gen_hf.config.hidden_size
+        self.gen_scalar_mix = ScalarMixWithDropout(
+            mixture_size=self.gen_hf.config.num_hidden_layers+1,
+            dropout=self.dropout,
+            do_layer_norm=False,
+        )
 
         # predictor module
-        self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
-        self.pred_emb_layer = self.pred_hf.embeddings
-        self.pred_encoder = self.pred_hf.encoder
-        self.pred_hidden_size = self.pred_hf.config.hidden_size
+        if self.pred_arch == 'lstm':
+            self.pred_encoder = LSTMEncoder(self.gen_hidden_size, self.gen_hidden_size, bidirectional=True)
+            self.pred_hidden_size = self.gen_hidden_size * 2
+            self.pred_emb_layer = self.gen_emb_layer
+        elif self.pred_arch == 'masked_average':
+            self.pred_encoder = MaskedAverageEncoder()
+            self.pred_hidden_size = self.gen_hidden_size
+            self.pred_emb_layer = self.gen_emb_layer
+        else:
+            self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
+            self.pred_emb_layer = self.pred_hf.embeddings if 't5' not in self.pred_arch else self.pred_hf.shared
+            self.pred_encoder = self.pred_hf.encoder
+            self.pred_hidden_size = self.pred_hf.config.hidden_size
+            self.pred_scalar_mix = ScalarMixWithDropout(
+                mixture_size=self.pred_hf.config.num_hidden_layers+1,
+                dropout=self.dropout,
+                do_layer_norm=False,
+            )
 
         # explainer
         self.explainer_mlp = nn.Sequential(
@@ -88,20 +108,10 @@ class HFRationalizer(BaseRationalizer):
             nn.Sigmoid() if not self.is_multilabel else nn.LogSoftmax(dim=-1),
         )
 
-        # useful for stabilizing training
-        self.pred_scalar_mix = ScalarMixWithDropout(
-            mixture_size=self.pred_hf.config.num_hidden_layers+1,
-            dropout=self.dropout,
-            do_layer_norm=False,
-        )
+        # share also scalar mix
         if self.shared_gen_pred:
+            del self.gen_scalar_mix
             self.gen_scalar_mix = self.pred_scalar_mix
-        else:
-            self.gen_scalar_mix = ScalarMixWithDropout(
-                mixture_size=self.gen_hf.config.num_hidden_layers+1,
-                dropout=self.dropout,
-                do_layer_norm=False,
-            )
 
         # initialize params using xavier initialization for weights and zero for biases
         self.init_weights(self.explainer_mlp)
@@ -125,13 +135,20 @@ class HFRationalizer(BaseRationalizer):
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
-            gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True).hidden_states
-            gen_h = self.gen_scalar_mix(gen_h, mask)
+            if 't5' in self.gen_arch:
+                gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask, output_hidden_states=True)
+            else:
+                gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True)
+            gen_h = self.gen_scalar_mix(gen_h.hidden_states, mask)
         else:
             # selected_layers = list(map(int, self.selected_layers.split(',')))
             # gen_h = torch.stack(self.gen_encoder(gen_e, ext_mask).hidden_states)
             # gen_h = gen_h[selected_layers].mean(dim=0)
-            gen_h = self.gen_encoder(gen_e, ext_mask).last_hidden_state
+            if 't5' in self.gen_arch:
+                gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask)
+            else:
+                gen_h = self.gen_encoder(gen_e, ext_mask)
+            gen_h = gen_h.last_hidden_state
 
         if self.explainer_pre_mlp:
             gen_h = self.explainer_mlp(gen_h)
@@ -157,13 +174,24 @@ class HFRationalizer(BaseRationalizer):
         if self.selection_mask:
             ext_mask = (1.0 - z_mask.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
-        if self.use_scalar_mix:
-            pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
-            pred_h = self.pred_scalar_mix(pred_h, mask)
+        if self.pred_arch == 'lstm':
+            _, summary = self.pred_encoder(pred_e, mask)
+        elif self.pred_arch == 'masked_average':
+            summary = self.pred_encoder(pred_e, mask)
         else:
-            pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
-
-        summary = masked_average(pred_h, mask)
+            if self.use_scalar_mix:
+                if 't5' in self.pred_arch:
+                    pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask, output_hidden_states=True)
+                else:
+                    pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True)
+                pred_h = self.pred_scalar_mix(pred_h.hidden_states, mask)
+            else:
+                if 't5' in self.pred_arch:
+                    pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask)
+                else:
+                    pred_h = self.pred_encoder(pred_e, ext_mask)
+                pred_h = pred_h.last_hidden_state
+            summary = masked_average(pred_h, mask)
         y_hat = self.output_layer(summary)
 
         return z, y_hat
