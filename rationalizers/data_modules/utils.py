@@ -35,19 +35,21 @@ def remap_input_to_cf_vocab(input_ids, tokenizer, cf_tokenizer):
     Returns:
         cf_input_counts: the frequency that each input_id will be repeated to
     """
-    ff_special_tokens = tokenizer.special_tokens_map.values()
-    ff_has_bos = tokenizer.cls_token is not None or tokenizer.bos_token is not None
-    ff_has_eos = tokenizer.sep_token is not None or tokenizer.eos_token is not None
-    cf_has_bos = cf_tokenizer.cls_token is not None or cf_tokenizer.bos_token is not None
-    cf_has_eos = cf_tokenizer.sep_token is not None or cf_tokenizer.eos_token is not None
-    ff_bos_token = tokenizer.cls_token if tokenizer.cls_token is not None else tokenizer.bos_token
-    ff_eos_token = tokenizer.sep_token if tokenizer.sep_token is not None else tokenizer.eos_token
+    ff_special_tokens_vals = tokenizer.special_tokens_map.values()
+    ff_special_tokens_keys = tokenizer.special_tokens_map.keys()
+    ff_has_bos = 'cls_token' in ff_special_tokens_keys or 'bos_token' in ff_special_tokens_keys
+    ff_has_eos = 'sep_token' in ff_special_tokens_keys or 'eos_token' in ff_special_tokens_keys
+    ff_bos_token = tokenizer.cls_token if 'cls_token' in ff_special_tokens_keys else tokenizer.bos_token
+    ff_eos_token = tokenizer.sep_token if 'sep_token' in ff_special_tokens_keys else tokenizer.eos_token
+    cf_special_tokens_keys = cf_tokenizer.special_tokens_map.keys()
+    cf_has_bos = 'cls_token' in cf_special_tokens_keys or 'bos_token' in cf_special_tokens_keys
+    cf_has_eos = 'sep_token' is cf_special_tokens_keys or 'eos_token' in cf_special_tokens_keys
     cf_input_counts = []
     for x_s in tokenizer.batch_decode(input_ids):
         x_counts_inner = []
         for word in x_s.split():
             # handle special tokens (e.g., CLS, SEP, PAD, UNK)
-            if word in ff_special_tokens:
+            if word in ff_special_tokens_vals:
                 p_f = [0]
                 p_cf = [0]
             else:

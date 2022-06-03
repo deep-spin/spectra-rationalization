@@ -56,9 +56,9 @@ train:
     selection_mask: False
 
     # counterfactual flow
-    cf_tokenizer: 'bert-base-cased'
-    cf_gen_arch: "bert-base-cased"
-    cf_pred_arch: "bert-base-cased"
+    cf_tokenizer: 't5-small'
+    cf_gen_arch: "t5-small"
+    cf_pred_arch: "lstm"
     cf_gen_emb_requires_grad: False
     cf_pred_emb_requires_grad: False
     cf_gen_encoder_requires_grad: False
@@ -78,7 +78,7 @@ train:
     # cf_generate_kwargs:
 
     # both flows
-    share_tokenizers: True  # use the same tokenizer for both flows (avoid double loading)
+    share_tokenizers: False  # use the same tokenizer for both flows (avoid double loading)
     share_preds: False      # share predictor between flows
     temperature: 1.0
 

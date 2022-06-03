@@ -117,14 +117,16 @@ class CounterfactualRationalizer(BaseRationalizer):
         if self.pred_arch == 'lstm':
             self.pred_encoder = LSTMEncoder(self.gen_hidden_size, self.gen_hidden_size, bidirectional=True)
             self.pred_hidden_size = self.gen_hidden_size * 2
+            self.pred_emb_layer = self.gen_emb_layer
         elif self.pred_arch == 'masked_average':
             self.pred_encoder = MaskedAverageEncoder()
             self.pred_hidden_size = self.gen_hidden_size
+            self.pred_emb_layer = self.gen_emb_layer
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
             self.pred_hidden_size = self.pred_hf.config.hidden_size
-        self.pred_emb_layer = self.pred_hf.embeddings
-        self.pred_encoder = self.pred_hf.encoder
+            self.pred_emb_layer = self.pred_hf.embeddings
+            self.pred_encoder = self.pred_hf.encoder
         self.pred_scalar_mix = ScalarMixWithDropout(
             mixture_size=self.pred_hf.config.num_hidden_layers+1,
             dropout=self.dropout,
@@ -352,11 +354,16 @@ class CounterfactualRationalizer(BaseRationalizer):
         if self.selection_mask:
             ext_mask = (1.0 - z_mask.squeeze(-1)[:, None, None, :].to(self.dtype)) * -10000.0
 
-        if self.use_scalar_mix:
-            pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
-            pred_h = self.pred_scalar_mix(pred_h, mask)
+        if self.pred_arch == 'lstm':
+            _, pred_h = self.pred_encoder(pred_e, mask)
+        elif self.pred_arch == 'masked_average':
+            pred_h = self.pred_encoder(pred_e, mask)
         else:
-            pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
+            if self.use_scalar_mix:
+                pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True).hidden_states
+                pred_h = self.pred_scalar_mix(pred_h, mask)
+            else:
+                pred_h = self.pred_encoder(pred_e, ext_mask).last_hidden_state
 
         summary = masked_average(pred_h, mask)
         y_hat = self.output_layer(summary)
@@ -367,12 +374,15 @@ class CounterfactualRationalizer(BaseRationalizer):
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
 
-        # fix inputs for t5
         if 't5' in self.cf_gen_arch:
+            # fix inputs for t5 (replace chunked masked positions by a single sentinel token)
             e, z, mask = make_input_for_t5(e, z, mask)
             # create sentinel tokens
-            e_mask = self.cf_gen_emb_layer((z > 0).long().cumsum(dim=-1) - 1 + 32000)
-
+            sentinel_ids = 32100 - (z > 0).long().cumsum(dim=-1)
+            # clamp valid input ids (might glue last generations as T5 has only 100 sentinels)
+            sentinel_ids = torch.clamp(sentinel_ids, min=32000, max=32099)
+            # get sentinel embeddings
+            e_mask = self.cf_gen_emb_layer(sentinel_ids)
         else:
             e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.cf_mask_token_id)
 
@@ -386,17 +396,19 @@ class CounterfactualRationalizer(BaseRationalizer):
         # gen_ext_mask = ext_mask * (z_bar.squeeze(-1)[:, None, None, :] > 0.0).float()
         gen_ext_mask = ext_mask
 
-        # diff where
+        # differentiable where
         s_bar = e_mask * z_mask + e * (1 - z_mask)
 
         # pass (1-z)-masked inputs
         if self.cf_use_scalar_mix:
             if 't5' in self.cf_gen_arch:
                 cf_gen_enc_out = self.cf_gen_encoder(inputs_embeds=s_bar, attention_mask=mask, output_hidden_states=True)
+                # no scalar mix for t5
+                h_tilde = cf_gen_enc_out.hidden_states
             else:
                 cf_gen_enc_out = self.cf_gen_encoder(s_bar, gen_ext_mask, output_hidden_states=True)
-            h_tilde = cf_gen_enc_out.hidden_states
-            h_tilde = self.cf_gen_scalar_mix(h_tilde, mask)
+                h_tilde = cf_gen_enc_out.hidden_states
+                h_tilde = self.cf_gen_scalar_mix(h_tilde, mask)
         else:
             if 't5' in self.cf_gen_arch:
                 cf_gen_enc_out = self.cf_gen_encoder(inputs_embeds=s_bar, attention_mask=mask)
@@ -407,12 +419,10 @@ class CounterfactualRationalizer(BaseRationalizer):
         # sample from LM
         if self.cf_use_reinforce:
             if 't5' in self.cf_gen_arch:
-                # fix last hidden state as the output of scalar mix
-                cf_gen_enc_out.last_hidden_state = h_tilde
                 # sample autoregressively
                 gen_out = self.cf_gen_hf.generate(
                     encoder_outputs=cf_gen_enc_out,
-                    attention_mask=mask,
+                    attention_mask=mask.long(),
                     output_scores=True,
                     return_dict_in_generate=True,
                     **self.cf_generate_kwargs
@@ -447,20 +457,31 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # expand z to account for the new tokens in case of using t5
         if 't5' in self.cf_gen_arch:
-            import ipdb; ipdb.set_trace()
-            # todo: fixme
-            x_tilde = merge_input_and_gen_ids(x, x_tilde, pad_id=cf_constants.PAD_ID)
             z_tilde = repeat_interleave_as_gen_ids_from_t5(z, x_tilde, pad_id=cf_constants.PAD_ID)
             mask_tilde = repeat_interleave_as_gen_ids_from_t5(mask, x_tilde, pad_id=cf_constants.PAD_ID)
+            x_tilde = merge_input_and_gen_ids(x, x_tilde, pad_id=cf_constants.PAD_ID)
+
+            # fix the corner case of generating less tokens than what was selected
+            original_seq_len = z_tilde.shape[-1]
+            expaned_seq_len = x_tilde.shape[-1]
+            if original_seq_len > expaned_seq_len:
+                z_tilde = z_tilde[:, :expaned_seq_len]
+                mask_tilde = mask_tilde[:, :expaned_seq_len]
+
+            # if we generated too much, there isnt much we can do besides truncating
+            if expaned_seq_len > 512 and 'bert' in self.cf_pred_arch:
+                z_tilde = z_tilde[:, :512]
+                mask_tilde = mask_tilde[:, :512]
+                x_tilde = x_tilde[:, :512]
+
         else:  # otherwise our dimensions match, so we can reuse the same z
             z_tilde = z
             mask_tilde = mask
         ext_mask_tilde = (1.0 - mask_tilde[:, None, None, :].to(self.dtype)) * -10000.0
 
-        # todo: fixme
-        # we need to remap t5 generated ids to bert ids
-        # or use t5 embeddings
-        if self.cf_selection_faithfulness is True:
+        # fixme: we need to remap t5 generated ids to bert ids or use t5 embeddings
+        # in case of using pretrained transformers as the counterfactual predictor
+        if self.cf_selection_faithfulness:
             # get the predictor embeddings corresponding to x_tilde
             if self.cf_use_reinforce:
                 # x_tilde contains indices
@@ -485,7 +506,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         # input selection
         if self.cf_selection_mode == 'select':
             # select inputs by z_tilde
-            import ipdb; ipdb.set_trace()
             z_mask_tilde = (z_tilde * mask_tilde.float()).unsqueeze(-1)
             s_tilde = pred_e * z_mask_tilde + pred_e_mask * (1 - z_mask_tilde)
         else:
@@ -499,9 +519,9 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # get hidden states
         if self.cf_pred_arch == 'lstm':
-            _, pred_h = self.pred_encoder(s_tilde, mask_tilde)
+            _, summary = self.cf_pred_encoder(s_tilde, mask_tilde)
         elif self.cf_pred_arch == 'masked_average':
-            pred_h = self.pred_encoder(s_tilde, mask_tilde)
+            summary = self.cf_pred_encoder(s_tilde, mask_tilde)
         else:
             # pass the selected inputs through the encoder
             if self.cf_use_scalar_mix:
@@ -509,15 +529,16 @@ class CounterfactualRationalizer(BaseRationalizer):
                 pred_h = self.cf_pred_scalar_mix(pred_h, mask_tilde)
             else:
                 pred_h = self.cf_pred_encoder(s_tilde, ext_mask_tilde).last_hidden_state
+            # get predictions
+            summary = masked_average(pred_h, mask_tilde)
 
-        # get predictions
-        summary = masked_average(pred_h, mask_tilde)
+        # cf predictor output
         y_tilde_hat = self.cf_output_layer(summary)
 
         self.z_tilde = z_tilde
         return x_tilde, z_tilde, mask_tilde, y_tilde_hat
 
-    def get_factual_loss(self, y_hat, y, prefix, mask=None):
+    def get_factual_loss(self, y_hat, y, mask, prefix):
         """
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -545,7 +566,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         return loss, stats
 
-    def get_counterfactual_loss(self, y_hat, y, prefix, mask=None):
+    def get_counterfactual_loss(self, y_hat, y, z_tilde, mask_tilde, prefix):
         """
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -600,20 +621,22 @@ class CounterfactualRationalizer(BaseRationalizer):
 
             # log P(x_tilde | s; phi)
             if 't5' in self.cf_gen_arch:
-                # compute log prob of all sampled tokens
+                # compute log prob of all sampled tokens (excluding sentinels)
                 logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+                gen_ids = logp_xtilde.argmax(dim=-1)
+                gen_mask = ~((gen_ids >= 32000) & (gen_ids <= 32099))  # non-sentinel
+                gen_mask &= (gen_ids != cf_constants.PAD_ID)  # padding
                 logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
-                logp_xtilde = logp_xtilde.masked_fill(~mask, 0)
-                logp_xtilde = logp_xtilde.cumsum(1)
-                log_xtilde_scalar = logp_xtilde.sum(1) / mask.float().sum(1).unsqueeze(1)
+                logp_xtilde = logp_xtilde.masked_fill(~gen_mask, 0)
+                log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
             else:
-                # compute log probe of only selected tokens
+                # compute only the log prob of selected tokens
                 logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
                 logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
                 logp_xtilde = torch.where(self.z_tilde == 0, 0, logp_xtilde)
-                logp_xtilde = logp_xtilde.masked_fill(~mask, 0)
-                log_xtilde_scalar = logp_xtilde.sum(1) / mask.float().sum(1).unsqueeze(1)
+                logp_xtilde = logp_xtilde.masked_fill(~mask_tilde, 0)
+                log_xtilde_scalar = (logp_xtilde * mask_tilde.float()).sum(1) / mask_tilde.float().sum(1)
 
             # compute generator loss
             cost_vec = loss_vec.detach()
@@ -644,7 +667,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             main_loss = loss + cost_logpz
 
         # latent selection stats
-        num_0, num_c, num_1, total = get_z_stats(self.z_tilde, mask)
+        num_0, num_c, num_1, total = get_z_stats(z_tilde, mask_tilde)
         stats[prefix + "_cf_p0"] = num_0 / float(total)
         stats[prefix + "_cf_pc"] = num_c / float(total)
         stats[prefix + "_cf_p1"] = num_1 / float(total)
@@ -685,11 +708,11 @@ class CounterfactualRationalizer(BaseRationalizer):
         # compute loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
         y = labels if not self.is_multilabel else labels.view(-1)
-        ff_loss, loss_stats = self.get_factual_loss(y_hat, y, prefix=prefix, mask=mask)
+        ff_loss, loss_stats = self.get_factual_loss(y_hat, y, mask, prefix=prefix)
 
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
         y_cf = 1 - y  # todo: write generic function
-        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, z_tilde, mask_tilde, prefix=prefix)
 
         loss = ff_loss + self.cf_lbda * cf_loss
 
@@ -750,7 +773,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
         y_cf = 1 - y  # todo: write generic function
-        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, prefix=prefix, mask=mask_cf)
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, z_tilde, mask_tilde, prefix=prefix)
         self.logger.agg_and_log_metrics(cf_loss_stats, step=None)
 
         loss = ff_loss + self.cf_lbda * cf_loss
@@ -763,10 +786,12 @@ class CounterfactualRationalizer(BaseRationalizer):
         ids_rationales, rationales = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
         pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
-        # todo: correct gen_ids for t5
-        z_1 = (z_tilde > 0).long()
-        gen_ids = x_tilde if self.cf_use_reinforce else x_tilde.argmax(dim=-1)
-        gen_ids = z_1 * gen_ids + (1 - z_1) * input_ids
+        if 't5' in self.cf_gen_arch:
+            gen_ids = x_tilde
+        else:
+            z_1 = (z_tilde > 0).long()
+            gen_ids = x_tilde if self.cf_use_reinforce else x_tilde.argmax(dim=-1)
+            gen_ids = z_1 * gen_ids + (1 - z_1) * input_ids
         cfs = [self.cf_tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
 
         # output to be stacked across iterations
@@ -969,10 +994,10 @@ class CounterfactualRationalizer(BaseRationalizer):
 
 def make_input_for_t5(e, z, mask):
     """
-    todo: add docstring
+    Replace masked positions by sentinel tokens
     """
     bs, seq_len = z.shape
-    z_first = z - torch.cat((z.new_zeros(bs, 1), z[:, :-1]), dim=-1)
+    z_first = torch.relu(z - torch.cat((z.new_zeros(bs, 1), z[:, :-1]), dim=-1))
     ar = torch.arange(seq_len, device=z.device).unsqueeze(0).expand(bs, -1).long()
     z_all_but_succ = (1 - (z > 0).long() * (1 - (z_first > 0).long())) * (ar + 1)
     z_all_but_succ = z_all_but_succ.masked_fill(z_all_but_succ == 0, seq_len + 1) - 1
@@ -1017,7 +1042,10 @@ def repeat_interleave_and_pad(x, counts, pad_id=0):
     """
     if counts[0] is None:
         return x
-    x_new = [x[i].repeat_interleave(counts[i], dim=-1) for i in range(len(counts))]
+    seq_len = x.shape[-1]
+    # if any(len(c) != seq_len for c in counts):
+    #     print(list(map(len, counts)))  # why?
+    x_new = [x[i].repeat_interleave(counts[i][:seq_len], dim=-1) for i in range(len(counts))]
     x_new = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=pad_id)
     return x_new.to(x.device)
 
@@ -1026,7 +1054,9 @@ def merge_input_and_gen_ids(input_ids, generated_ids, pad_id=0, eos_id=1, idx_a=
     new_input_ids = []
     for k in range(len(input_ids)):
         inp_ids = input_ids[k]
+        inp_len = (inp_ids != pad_id).sum().item()
         gen_ids = generated_ids[k]
+        gen_len = (gen_ids != pad_id).sum().item()
         z_x = ~((inp_ids >= idx_a) & (inp_ids <= idx_b))
         z_x = z_x & (inp_ids != pad_id) & (inp_ids != eos_id)
         z_x = z_x.long().tolist()
@@ -1035,21 +1065,26 @@ def merge_input_and_gen_ids(input_ids, generated_ids, pad_id=0, eos_id=1, idx_a=
         z_y = z_y.long().tolist()
         i, j = 0, 0
         new_inp = []
-        while j < len(z_y):
+        while j < gen_len:
             if z_y[j] == 1:
-                while z_x[i] == 1 and i < len(z_x):
+                while z_x[i] == 1 and i < inp_len:
                     new_inp.append(inp_ids[i].item())
                     i += 1
                 j += 1
                 i += 1
-                if i >= len(z_x):
+                if i >= inp_len:
                     break
             else:
                 new_inp.append(gen_ids[j].item())
                 j += 1
+        if i < inp_len:
+            new_inp.extend(inp_ids[i:inp_len])
         if new_inp[-1] != 1 and new_inp[-1] != 0:
             new_inp.append(1)
         new_input_ids.append(torch.as_tensor(new_inp))
     x_new = torch.nn.utils.rnn.pad_sequence(new_input_ids, batch_first=True, padding_value=pad_id)
     x_new = x_new.to(input_ids.device)
     return x_new
+
+# tmp = merge_input_and_gen_ids(x, x_tilde, pad_id=cf_constants.PAD_ID)
+# self.cf_tokenizer.convert_ids_to_tokens(tmp[0])
