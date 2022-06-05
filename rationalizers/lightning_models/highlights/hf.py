@@ -37,6 +37,7 @@ class HFRationalizer(BaseRationalizer):
         self.pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", True)
         self.gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
         self.pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)
+        self.pred_output_requires_grad = h_params.get("pred_output_requires_grad", True)
         self.shared_gen_pred = h_params.get("shared_gen_pred", False)
         self.use_scalar_mix = h_params.get("use_scalar_mix", True)
         self.dropout = h_params.get("dropout", 0.1)
@@ -107,6 +108,10 @@ class HFRationalizer(BaseRationalizer):
             nn.Linear(self.pred_hidden_size, nb_classes),
             nn.Sigmoid() if not self.is_multilabel else nn.LogSoftmax(dim=-1),
         )
+
+        # freeze output layer
+        if not self.pred_output_requires_grad:
+            freeze_module(self.output_layer)
 
         # share also scalar mix
         if self.shared_gen_pred:
