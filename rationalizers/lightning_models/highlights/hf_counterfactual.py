@@ -1,5 +1,6 @@
 import logging
 import os
+from itertools import chain
 
 import numpy as np
 import torch
@@ -9,6 +10,7 @@ from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
 from rationalizers import cf_constants, constants
+from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.explainers import available_explainers
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
 from rationalizers.modules.metrics import evaluate_rationale
@@ -82,7 +84,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
         self.temperature = h_params.get("temperature", 1.0)
-        self.share_preds = h_params.get("share_preds", True)
+        self.share_predictors = h_params.get("share_predictors", False)
+        self.share_generators = h_params.get("share_generators", False)
 
         if self.shared_gen_pred:
             assert self.gen_arch == self.pred_arch
@@ -118,20 +121,22 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.pred_encoder = LSTMEncoder(self.gen_hidden_size, self.gen_hidden_size, bidirectional=True)
             self.pred_hidden_size = self.gen_hidden_size * 2
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_scalar_mix = None
         elif self.pred_arch == 'masked_average':
             self.pred_encoder = MaskedAverageEncoder()
             self.pred_hidden_size = self.gen_hidden_size
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_scalar_mix = None
         else:
-            self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
+            self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch, dropout=self.dropout)
             self.pred_hidden_size = self.pred_hf.config.hidden_size
             self.pred_emb_layer = self.pred_hf.embeddings
             self.pred_encoder = self.pred_hf.encoder
-        self.pred_scalar_mix = ScalarMixWithDropout(
-            mixture_size=self.pred_hf.config.num_hidden_layers+1,
-            dropout=self.dropout,
-            do_layer_norm=False,
-        )
+            self.pred_scalar_mix = ScalarMixWithDropout(
+                mixture_size=self.pred_hf.config.num_hidden_layers+1,
+                dropout=self.dropout,
+                do_layer_norm=False,
+            )
         # predictor output layer
         self.output_layer = nn.Sequential(
             nn.Linear(self.pred_hidden_size, self.pred_hidden_size),
@@ -151,8 +156,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         # for reinforce
         self.n_points = 0
         self.mean_baseline = 0
-        self.cf_log_prob_x_tilde = None
-        self.cf_logits = None
+        self.log_prob_x_tilde = None
 
         # counterfactual generator module
         if 't5' in self.cf_gen_arch:
@@ -210,6 +214,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         # weights details
         ########################
         # initialize params using xavier initialization for weights and zero for biases
+        # (weights of these modules might be loaded later)
         self.init_weights(self.explainer_mlp)
         self.init_weights(self.explainer)
         self.init_weights(self.output_layer)
@@ -225,13 +230,14 @@ class CounterfactualRationalizer(BaseRationalizer):
         if not self.cf_pred_emb_requires_grad:
             freeze_module(self.cf_pred_emb_layer)
 
-        # freeze models
+        # freeze models (and set to eval mode to disable dropout)
         if not self.gen_encoder_requires_grad:
             freeze_module(self.gen_encoder)
             freeze_module(self.gen_scalar_mix)
         if not self.pred_encoder_requires_grad:
             freeze_module(self.pred_encoder)
-            freeze_module(self.pred_scalar_mix)
+            if self.pred_scalar_mix is not None:
+                freeze_module(self.pred_scalar_mix)
         if not self.cf_gen_encoder_requires_grad:
             freeze_module(self.cf_gen_encoder)
             freeze_module(self.cf_gen_scalar_mix)
@@ -260,8 +266,21 @@ class CounterfactualRationalizer(BaseRationalizer):
             del self.cf_gen_scalar_mix  # unregister generator scalar mix
             self.cf_gen_scalar_mix = self.cf_pred_scalar_mix
 
+        # shared factual and counterfactual generators
+        if self.share_generators:
+            del self.cf_gen_hf
+            del self.cf_gen_emb_layer
+            del self.cf_gen_encoder
+            del self.cf_gen_hidden_size
+            del self.cf_gen_scalar_mix
+            self.cf_gen_hf = self.gen_hf
+            self.cf_gen_emb_layer = self.gen_emb_layer
+            self.cf_gen_encoder = self.gen_encoder
+            self.cf_gen_hidden_size = self.gen_hidden_size
+            self.cf_gen_scalar_mix = self.gen_scalar_mix
+
         # shared factual and counterfactual predictors
-        if self.share_preds:
+        if self.share_predictors:
             del self.cf_pred_hf
             del self.cf_pred_emb_layer
             del self.cf_pred_encoder
@@ -279,6 +298,44 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_train_accuracy = torchmetrics.Accuracy()
         self.cf_val_accuracy = torchmetrics.Accuracy()
         self.cf_test_accuracy = torchmetrics.Accuracy()
+
+    def configure_optimizers(self):
+        """Configure optimizers and lr schedulers for Trainer."""
+        ff_params = chain(
+            self.gen_emb_layer.parameters(),
+            self.gen_encoder.parameters(),
+            self.gen_scalar_mix.parameters(),
+            self.explainer_pre_mlp.parameters(),
+            self.explainer.parameters(),
+            self.pred_emb_layer.parameters() if not self.shared_gen_pred else [],
+            self.pred_encoder.parameters() if not self.shared_gen_pred else [],
+            self.pred_scalar_mix.parameters() if not self.shared_gen_pred else [],
+            self.output_layer.parameters()
+        )
+        cf_params = chain(
+            self.cf_gen_emb_layer.parameters() if not self.share_generators else [],
+            self.cf_gen_encoder.parameters() if not self.share_generators else [],
+            self.cf_gen_scalar_mix.parameters() if not self.share_generators else [],
+            self.cf_pred_emb_layer.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
+            self.cf_pred_encoder.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
+            self.cf_pred_scalar_mix.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
+            self.cf_output_layer.parameters() if not self.share_predictors else []
+        )
+        grouped_parameters = [
+            {"params": ff_params, 'lr': self.hparams['lr']},
+        ]
+        if sum(1 for _ in cf_params) == 0:
+            shell_logger.info('All cf weights are shared. Using only `lr`.')
+        else:
+            grouped_parameters.append({"params": cf_params, 'lr': self.hparams['cf_lr']})
+
+        optimizer = build_optimizer(grouped_parameters, self.hparams)
+        scheduler = build_scheduler(optimizer, self.hparams)
+        output = {"optimizer": optimizer}
+        if scheduler is not None:
+            output["scheduler"] = scheduler
+            output["monitor"] = self.hparams['monitor']  # not sure we need this
+        return output
 
     def forward(
         self,
@@ -468,9 +525,8 @@ class CounterfactualRationalizer(BaseRationalizer):
             x_one_hot = nn.functional.one_hot(x, num_classes=x_tilde.shape[-1])
             x_tilde = z_1 * x_tilde + (1 - z_1) * x_one_hot
 
-        # compute log proba
-        self.cf_logits = logits
-        self.cf_log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
+        # save log probas for later
+        self.log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         # expand z to account for the new tokens in case of using t5
         if 't5' in self.cf_gen_arch:
@@ -646,19 +702,19 @@ class CounterfactualRationalizer(BaseRationalizer):
             # log P(x_tilde | s; phi)
             if 't5' in self.cf_gen_arch:
                 # compute log prob of all sampled tokens (excluding sentinels)
-                logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+                logp_xtilde = self.log_prob_x_tilde  # [B, T, |V|]
                 gen_ids = logp_xtilde.argmax(dim=-1)
                 gen_mask = ~((gen_ids >= 32000) & (gen_ids <= 32099))  # non-sentinel
-                gen_mask &= (gen_ids != cf_constants.PAD_ID)  # padding
+                gen_mask &= (gen_ids != cf_constants.PAD_ID)  # non-padding
                 logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
                 logp_xtilde = logp_xtilde.masked_fill(~gen_mask, 0)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
             else:
                 # compute only the log prob of selected tokens
-                logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+                logp_xtilde = self.log_prob_x_tilde  # [B, T, |V|]
                 logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
-                logp_xtilde = torch.where(self.z_tilde == 0, 0, logp_xtilde)
+                logp_xtilde = torch.where(z_tilde == 0, 0, logp_xtilde)
                 logp_xtilde = logp_xtilde.masked_fill(~mask_tilde, 0)
                 log_xtilde_scalar = (logp_xtilde * mask_tilde.float()).sum(1) / mask_tilde.float().sum(1)
 
