@@ -65,6 +65,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_gen_emb_requires_grad = h_params.get("cf_gen_emb_requires_grad", False)
         self.cf_pred_emb_requires_grad = h_params.get("cf_pred_emb_requires_grad", False)
         self.cf_gen_encoder_requires_grad = h_params.get("cf_gen_encoder_requires_grad", True)
+        self.cf_gen_lm_head_requires_grad = h_params.get("cf_gen_lm_head_requires_grad", True)
         self.cf_pred_encoder_requires_grad = h_params.get("cf_pred_encoder_requires_grad", True)
         self.cf_pred_output_requires_grad = h_params.get("cf_pred_output_requires_grad", True)
         self.cf_shared_gen_pred = h_params.get("cf_shared_gen_pred", False)
@@ -121,11 +122,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.pred_encoder = LSTMEncoder(self.gen_hidden_size, self.gen_hidden_size, bidirectional=True)
             self.pred_hidden_size = self.gen_hidden_size * 2
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_hf = None
             self.pred_scalar_mix = None
         elif self.pred_arch == 'masked_average':
             self.pred_encoder = MaskedAverageEncoder()
             self.pred_hidden_size = self.gen_hidden_size
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_hf = None
             self.pred_scalar_mix = None
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch, dropout=self.dropout)
@@ -185,11 +188,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_pred_encoder = LSTMEncoder(self.cf_gen_hidden_size, self.cf_gen_hidden_size, bidirectional=True)
             self.cf_pred_hidden_size = self.cf_gen_hidden_size * 2
             self.cf_pred_emb_layer = self.cf_gen_emb_layer
+            self.cf_pred_hf = None
             self.cf_pred_scalar_mix = None
         elif self.cf_pred_arch == 'masked_average':
             self.cf_pred_encoder = MaskedAverageEncoder()
             self.cf_pred_hidden_size = self.cf_gen_hidden_size
             self.cf_pred_emb_layer = self.cf_gen_emb_layer
+            self.cf_pred_hf = None
             self.cf_pred_scalar_mix = None
         else:
             self.cf_pred_hf = self.cf_gen_hf if self.cf_shared_gen_pred else AutoModel.from_pretrained(self.cf_pred_arch)
@@ -241,6 +246,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         if not self.cf_gen_encoder_requires_grad:
             freeze_module(self.cf_gen_encoder)
             freeze_module(self.cf_gen_scalar_mix)
+        if not self.cf_gen_lm_head_requires_grad:
+            freeze_module(self.cf_gen_lm_head)
         if not self.cf_pred_encoder_requires_grad:
             freeze_module(self.cf_pred_encoder)
             if self.cf_pred_scalar_mix is not None:
@@ -305,30 +312,27 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.gen_emb_layer.parameters(),
             self.gen_encoder.parameters(),
             self.gen_scalar_mix.parameters(),
-            self.explainer_pre_mlp.parameters(),
+            self.explainer_mlp.parameters(),
             self.explainer.parameters(),
             self.pred_emb_layer.parameters() if not self.shared_gen_pred else [],
             self.pred_encoder.parameters() if not self.shared_gen_pred else [],
-            self.pred_scalar_mix.parameters() if not self.shared_gen_pred else [],
+            self.pred_scalar_mix.parameters() if not self.shared_gen_pred and self.pred_scalar_mix is not None else [],
             self.output_layer.parameters()
         )
         cf_params = chain(
             self.cf_gen_emb_layer.parameters() if not self.share_generators else [],
             self.cf_gen_encoder.parameters() if not self.share_generators else [],
-            self.cf_gen_scalar_mix.parameters() if not self.share_generators else [],
+            self.cf_gen_lm_head.parameters(),
+            self.cf_gen_scalar_mix.parameters() if not self.share_generators and self.cf_gen_scalar_mix is not None else [],
             self.cf_pred_emb_layer.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
             self.cf_pred_encoder.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
-            self.cf_pred_scalar_mix.parameters() if not self.cf_shared_gen_pred and not self.share_predictors else [],
+            self.cf_pred_scalar_mix.parameters() if not self.cf_shared_gen_pred and not self.share_predictors and self.cf_pred_scalar_mix is not None else [],
             self.cf_output_layer.parameters() if not self.share_predictors else []
         )
         grouped_parameters = [
             {"params": ff_params, 'lr': self.hparams['lr']},
+            {"params": cf_params, 'lr': self.hparams['cf_lr']}
         ]
-        if sum(1 for _ in cf_params) == 0:
-            shell_logger.info('All cf weights are shared. Using only `lr`.')
-        else:
-            grouped_parameters.append({"params": cf_params, 'lr': self.hparams['cf_lr']})
-
         optimizer = build_optimizer(grouped_parameters, self.hparams)
         scheduler = build_scheduler(optimizer, self.hparams)
         output = {"optimizer": optimizer}
@@ -475,6 +479,9 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # pass (1-z)-masked inputs
         if self.cf_use_scalar_mix:
+            # it doesnt make a lot of sense to use scalar mix here since
+            # the lm head expects the hidden states of the last layer, but
+            # we since the lm head can be trained, it can still learn something
             if 't5' in self.cf_gen_arch:
                 cf_gen_enc_out = self.cf_gen_encoder(inputs_embeds=s_bar, attention_mask=mask, output_hidden_states=True)
                 # no scalar mix for t5
