@@ -377,6 +377,13 @@ class CounterfactualRationalizer(BaseRationalizer):
         return (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
 
     def get_factual_flow(self, x, mask=None):
+        """
+        Compute the factual flow.
+
+        :param x: input ids tensor. torch.LongTensor of shape [B, T]
+        :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :return: z, y_hat
+        """
         # create mask for pretrained-LMs
         ext_mask = mask[:, None, None, :]  # add head and seq dimension
         ext_mask = ext_mask.to(dtype=self.dtype)  # fp16 compatibility
@@ -449,6 +456,15 @@ class CounterfactualRationalizer(BaseRationalizer):
         return z, y_hat
 
     def get_counterfactual_flow(self, x, z, mask=None):
+        """
+        Compute the counterfactual flow.
+
+        :param x: input ids tensor. torch.LongTensor of shape [B, T]
+        :param z: binary variables tensor. torch.FloatTensor of shape [B, T]
+        :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :return: (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
+        """
+
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
 
@@ -537,30 +553,53 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         # expand z to account for the new tokens in case of using t5
         if 't5' in self.cf_gen_arch:
-            z_tilde = repeat_interleave_as_gen_ids_from_t5(z, x_tilde, pad_id=cf_constants.PAD_ID)
-            mask_tilde = repeat_interleave_as_gen_ids_from_t5(mask, x_tilde, pad_id=cf_constants.PAD_ID)
-            x_tilde = merge_input_and_gen_ids(x, x_tilde, pad_id=cf_constants.PAD_ID)
+            # get the counts needed to expand the input_ids into generated_ids
+            gen_counts = get_new_frequencies_of_gen_ids_from_t5(
+                x, x_tilde, pad_id=cf_constants.PAD_ID, eos_id=cf_constants.EOS_ID,
+            )
+            # and vice-versa
+            inp_counts = get_new_frequencies_of_gen_ids_from_t5(
+                x_tilde, x, pad_id=cf_constants.PAD_ID, eos_id=cf_constants.EOS_ID
+            )
 
-            # fix the corner case of generating less tokens than what was selected
+            # expand x, z, mask according to gen_counts
+            x_rep = repeat_interleave_and_pad(x, gen_counts, pad_id=cf_constants.PAD_ID)
+            z_tilde = repeat_interleave_and_pad(z, gen_counts, pad_id=cf_constants.PAD_ID)
+            mask_tilde = repeat_interleave_and_pad(mask, gen_counts, pad_id=cf_constants.PAD_ID)
+
+            # expand x_tilde according to inp_counts
+            x_tilde_rep = repeat_interleave_and_pad(x_tilde, inp_counts)
+
+            # merge x_rep and x_tilde_rep into a single tensor
+            x_tilde = merge_input_and_gen_ids(x_rep, x_tilde_rep, pad_id=cf_constants.PAD_ID)
+
+            # fix the corner case of generating fewer tokens than what was selected
             original_seq_len = z_tilde.shape[-1]
-            expaned_seq_len = x_tilde.shape[-1]
-            if original_seq_len > expaned_seq_len:
-                z_tilde = z_tilde[:, :expaned_seq_len]
-                mask_tilde = mask_tilde[:, :expaned_seq_len]
+            expanded_seq_len = x_tilde.shape[-1]
+            if original_seq_len > expanded_seq_len:
+                z_tilde = z_tilde[:, :expanded_seq_len]
+                mask_tilde = mask_tilde[:, :expanded_seq_len]
 
-            # if we generated too much, there isnt much we can do besides truncating
-            if expaned_seq_len > 512 and 'bert' in self.cf_pred_arch:
+            # if we generated too much, there isn't much we can do besides truncating
+            if expanded_seq_len > 512 and 'bert' in self.cf_pred_arch:
+                x_tilde = x_tilde[:, :512]
                 z_tilde = z_tilde[:, :512]
                 mask_tilde = mask_tilde[:, :512]
-                x_tilde = x_tilde[:, :512]
 
-        else:  # otherwise our dimensions match, so we can reuse the same z
+            # fixme: we need to remap t5 generated ids to bert ids or use t5 embeddings
+            #        in case of using pretrained transformers as the counterfactual predictor
+            #        (for now we are ignoring this combination)
+            # if 'bert' in self.cf_pred_arch:
+            #     x_tilde, z_tilde, mask_tilde = map_t5_ids_to_bert_ids(x_tilde, z_tilde, mask_tilde)
+
+        else:  # otherwise our dimensions match, so we can reuse the same z and mask
             z_tilde = z
             mask_tilde = mask
+
+        # mask for hf-transformers
         ext_mask_tilde = (1.0 - mask_tilde[:, None, None, :].to(self.dtype)) * -10000.0
 
-        # fixme: we need to remap t5 generated ids to bert ids or use t5 embeddings
-        #        in case of using pretrained transformers as the counterfactual predictor
+        # pass inputs or hidden states to the predictor
         if self.cf_selection_faithfulness:
             # get the predictor embeddings corresponding to x_tilde
             if self.cf_use_reinforce:
@@ -627,9 +666,12 @@ class CounterfactualRationalizer(BaseRationalizer):
 
     def get_factual_loss(self, y_hat, y, mask, prefix):
         """
+        Compute loss for the factual flow.
+
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param prefix: prefix for loss statistics (train, val, test)
         :return: tuple containing:
             `loss cost (torch.FloatTensor)`: the result of the loss function
             `loss stats (dict): dict with loss statistics
@@ -650,14 +692,19 @@ class CounterfactualRationalizer(BaseRationalizer):
         stats[prefix + "_pc"] = num_c / float(total)
         stats[prefix + "_p1"] = num_1 / float(total)
         stats[prefix + "_ps"] = (num_c + num_1) / float(total)
+        stats[prefix + "_main_loss"] = loss.item()
 
         return loss, stats
 
     def get_counterfactual_loss(self, y_hat, y, z_tilde, mask_tilde, prefix):
         """
+        Compute loss for the conterfactual flow.
+
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
-        :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param z_tilde: latent selection vector. torch.FloatTensor of shape [B, T]
+        :param mask_tilde: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param prefix: prefix for loss statistics (train, val, test)
         :return: tuple containing:
             `loss cost (torch.FloatTensor)`: the result of the loss function
             `loss stats (dict): dict with loss statistics
@@ -759,8 +806,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         stats[prefix + "_cf_pc"] = num_c / float(total)
         stats[prefix + "_cf_p1"] = num_1 / float(total)
         stats[prefix + "_cf_ps"] = (num_c + num_1) / float(total)
+        stats[prefix + "_cf_main_loss"] = main_loss.item()
 
-        stats["cf_main_loss"] = main_loss.item()
         return main_loss, stats
 
     def training_step(self, batch: dict, batch_idx: int):
@@ -812,6 +859,8 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         if self.is_multilabel:
             metrics_to_wandb = {
+                "train_ff_p1": loss_stats["train_p1"],
+                "train_cf_p1": cf_loss_stats["train_cf_p1"],
                 "train_ff_ps": loss_stats["train_ps"],
                 "train_cf_ps": cf_loss_stats["train_cf_ps"],
                 "train_ff_sum_loss": loss_stats["criterion"],
@@ -819,6 +868,8 @@ class CounterfactualRationalizer(BaseRationalizer):
             }
         else:
             metrics_to_wandb = {
+                "train_ff_p1": loss_stats["train_p1"],
+                "train_cf_p1": cf_loss_stats["train_cf_p1"],
                 "train_ff_ps": loss_stats["train_ps"],
                 "train_cf_ps": cf_loss_stats["train_cf_ps"],
                 "train_ff_sum_loss": loss_stats["mse"],
@@ -1082,40 +1133,120 @@ class CounterfactualRationalizer(BaseRationalizer):
 def make_input_for_t5(e, z, mask):
     """
     Replace masked positions by sentinel tokens
+
+    :param e: input sequence, torch.FloatTensor [B, T, D]
+    :param z: latent selection vector torch.FloarTensor [B, T]
+    :param mask: mask for padding positions, torch.BoolTensor [B, T]
+    :return: t5_input: new input ids for T5, torch.FloatTensor [B, T', D],
+             t5_z: new latent selection vector, torch.FloatTensor [B, T']
+             t5_mask: new mask for padding positions, torch.BoolTensor [B, T']
     """
-    bs, seq_len = z.shape
+    bs, seq_len, hdim = e.shape
+
+    # for example:
+    # z = [0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0]
+
+    # leave only the first non-zero element in each contiguous chunk
     z_first = torch.relu(z - torch.cat((z.new_zeros(bs, 1), z[:, :-1]), dim=-1))
+    # z_first = [0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+
+    # create a matrix of indices of shape (bs, seq_len)
     ar = torch.arange(seq_len, device=z.device).unsqueeze(0).expand(bs, -1).long()
-    z_all_but_succ = (1 - (z > 0).long() * (1 - (z_first > 0).long())) * (ar + 1)
-    z_all_but_succ = z_all_but_succ.masked_fill(z_all_but_succ == 0, seq_len + 1) - 1
-    z_all_but_succ = torch.sort(z_all_but_succ, stable=True, dim=-1).values
-    z_mask = z_all_but_succ < seq_len
-    z_all_but_succ = z_all_but_succ.masked_fill(~z_mask, seq_len - 1)
-    z_all_but_succ = z_all_but_succ.unsqueeze(-1).expand(-1, -1, e.shape[-1])
-    return e.gather(1, z_all_but_succ), z_first * z_mask.float(), mask & z_mask
+
+    # select all tokens but the 2nd-n in each chunk
+    z_all_but_succ = (1 - (z > 0).long() * (1 - (z_first > 0).long()))
+
+    # get the ids of these tokens (and set 2nd-n tokens in each chunk to 999999)
+    idxs_all_but_succ = z_all_but_succ * (ar + 1) + (1 - z_all_but_succ) * 999999
+
+    # sort ids so that 999999 are at the end
+    # (there are better ways to do this but sort is not very slow after all)
+    idxs_all_but_succ = torch.sort(idxs_all_but_succ, stable=True, dim=-1).values
+
+    # get the mask pointing to valid tokens
+    z_mask = idxs_all_but_succ < 999999
+
+    # discount 1 to get 0-index ids
+    idxs_all_but_succ = idxs_all_but_succ - 1
+
+    # for using gather, we need to replace these tokens by some valid index
+    # so we use seq_len - 1 here, which will lead to pad tokens anyway
+    idxs_all_but_succ = idxs_all_but_succ.masked_fill(~z_mask, seq_len - 1)
+
+    # expand as `e` so we can gather from it
+    idxs_all_but_succ = idxs_all_but_succ.unsqueeze(-1).expand(-1, -1, hdim)
+
+    # gather vectors from `e`
+    t5_input = e.gather(1, idxs_all_but_succ)
+
+    # the new mask is points to non padding tokens + eliminated tokens
+    t5_mask = idxs_all_but_succ < mask.sum(-1).unsqueeze(-1)
+
+    # the new mask is simply z_first (the places where sentinels were inserted)
+    t5_z = z_first * t5_mask.float()
+
+    return t5_input, t5_z, t5_mask
 
 
-def repeat_interleave_as_gen_ids_from_t5(x_ids, g_ids, pad_id=0, idx_a=32000, idx_b=32099):
+def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx_a=32000, idx_b=32099):
     """
-    todo: add docstring
+    Get the number of tokens generated by T5 for each position of the input.
+
+    :param x_ids: original input ids, torch.LongTensor of shape [B, T]
+    :param g_ids: generated ids, torch.LongTensor of shape [B, T]
+    :param pad_id: id of padding token
+    :param eos_id: id of end-of-sequence token
+    :param idx_a: id of first token of the new frequency range
+    :param idx_b: id of last token of the new frequency range
+    :return: new_freqs, torch.LongTensor of shape [B, T]
     """
-    x_rep = []
+    new_freqs = []
     for i in range(x_ids.shape[0]):
-        z_x = (x_ids[i] >= idx_a) & (x_ids[i] <= idx_b)  # select sentinel tokens
-        z_x = z_x & (x_ids[i] != pad_id) & (x_ids[i] != 1)    # ignore <pad> and </s>
-        z_y = ~((g_ids[i, 1:] >= idx_a) & (g_ids[i, 1:] <= idx_b))  # select non sentinel tokens
-        z_y = z_y & (g_ids[i, 1:] != pad_id) & (g_ids[i, 1:] != 1)       # ignore <pad> and </s>
+        # for example:
+        # x = ['▁UN', '▁Chief', '▁says', '▁there', '▁is', '▁no', '▁way', '▁to', '<extra_id_0>', '▁in', '▁Syria', '</s>']
+        # g = ['<extra_id_0>', '▁do', '▁so', '<extra_id_1>', '▁do', '▁so', '.', '</s>', '<pad>', '<pad>']
+
+        # recover z from x_ids
+        z_x = (x_ids[i] >= idx_a) & (x_ids[i] <= idx_b)          # select sentinel tokens
+        z_x = z_x & (x_ids[i] != pad_id) & (x_ids[i] != eos_id)  # but ignore <pad> and </s>
+        # for example:
+        # z_x = tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])
+
+        # recover the complement of z from g_ids
+        z_y = ~((g_ids[i] >= idx_a) & (g_ids[i] <= idx_b))       # select non sentinel tokens
+        z_y = z_y & (g_ids[i] != pad_id) & (g_ids[i] != eos_id)  # but ignore <pad> and </s>
+        # for example:
+        # z_y = tensor([0, 1, 1, 0, 1, 1, 1, 0, 0, 0])
+
         # count the number of consecutive non-sentinel tokens
         outputs, counts = torch.unique_consecutive(z_y, return_counts=True)
+        # for example:
+        # outputs = tensor([0, 1, 0, 1, 0])
+        # counts = tensor([1, 2, 1, 3, 3])
+
         # mask out invalid outputs due to end-of-sequence generation
         m = torch.arange(len(outputs), device=z_x.device) < (z_x.sum() * 2)
+        # for example:
+        # m = tensor([1, 1, 0, 0, 0])
+
+        # count only the valid outputs
         outputs = outputs.masked_fill(~m, 0)
         counts = counts.masked_fill(~m, 1)
+        # for example:
+        # outputs = tensor([0, 1, 0, 0, 0])
+        # counts = tensor([1, 2, 1, 1, 1])
+
         # convert counts to repeat_interleave frequencies
         n_x = 1 - z_x.clone().long()
+        # for example:
+        # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1])
+
         n_x[n_x == 0] = counts[outputs]
-        x_rep.append(torch.repeat_interleave(x_ids[i], n_x, dim=-1))
-    return torch.nn.utils.rnn.pad_sequence(x_rep, batch_first=True, padding_value=pad_id)
+        # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1])
+
+        # now we can repeat according to this new count, so we save them
+        new_freqs.append(n_x)
+    return new_freqs
 
 
 def repeat_interleave_and_pad(x, counts, pad_id=0):
@@ -1137,41 +1268,37 @@ def repeat_interleave_and_pad(x, counts, pad_id=0):
     return x_new.to(x.device)
 
 
-def merge_input_and_gen_ids(input_ids, generated_ids, pad_id=0, eos_id=1, idx_a=32000, idx_b=32099):
-    new_input_ids = []
-    for k in range(len(input_ids)):
-        inp_ids = input_ids[k]
-        inp_len = (inp_ids != pad_id).sum().item()
-        gen_ids = generated_ids[k]
-        gen_len = (gen_ids != pad_id).sum().item()
-        z_x = ~((inp_ids >= idx_a) & (inp_ids <= idx_b))
-        z_x = z_x & (inp_ids != pad_id) & (inp_ids != eos_id)
-        z_x = z_x.long().tolist()
-        z_y = ((gen_ids >= idx_a) & (gen_ids <= idx_b))
-        z_y = z_y & (gen_ids != pad_id) & (gen_ids != eos_id)
-        z_y = z_y.long().tolist()
-        i, j = 0, 0
-        new_inp = []
-        while j < gen_len:
-            if z_y[j] == 1:
-                while z_x[i] == 1 and i < inp_len:
-                    new_inp.append(inp_ids[i].item())
-                    i += 1
-                j += 1
-                i += 1
-                if i >= inp_len:
-                    break
-            else:
-                new_inp.append(gen_ids[j].item())
-                j += 1
-        if i < inp_len:
-            new_inp.extend(inp_ids[i:inp_len])
-        if new_inp[-1] != 1 and new_inp[-1] != 0:
-            new_inp.append(1)
-        new_input_ids.append(torch.as_tensor(new_inp))
-    x_new = torch.nn.utils.rnn.pad_sequence(new_input_ids, batch_first=True, padding_value=pad_id)
-    x_new = x_new.to(input_ids.device)
-    return x_new
+def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32000, idx_b=32099):
+    """
+    Merge the input ids and generated ids into one tensor.
 
-# tmp = merge_input_and_gen_ids(x, x_tilde, pad_id=cf_constants.PAD_ID)
-# self.cf_tokenizer.convert_ids_to_tokens(tmp[0])
+    :param input_ids_rep: input ids after repeated_interleave, tensor of shape [B, T1]
+    :param generated_ids_rep: generated ids after repeated_interleave, tensor of shape [B, T2]
+    :param pad_id: id of padding token
+    :param idx_a: id of first token of the new frequency range
+    :param idx_b: id of last token of the new frequency range
+    """
+    # recover z from input ids and generated ids
+    mask_inp = ~((input_ids_rep >= idx_a) & (input_ids_rep <= idx_b))
+    mask_gen = ~((generated_ids_rep >= idx_a) & (generated_ids_rep <= idx_b))
+
+    # get the length of the repeated tensors
+    len_inp = input_ids_rep.shape[1]
+    len_gen = generated_ids_rep.shape[1]
+
+    # if we have less tokens in the original input, we truncate the generated ones
+    if len_inp <= len_gen:
+        m = mask_inp[:, :len_inp].long()
+        merged_ids_rep = m * input_ids_rep[:, :len_inp] + (1 - m) * generated_ids_rep[:, :len_inp]
+
+    # otherwise, we truncate the input ones
+    else:
+        m = mask_gen[:, :len_gen].long()
+        merged_ids_rep = m * generated_ids_rep[:, :len_gen] + (1 - m) * input_ids_rep[:, :len_gen]
+
+    # cap the new tensor to the new length since the merged_ids
+    # can have more pad tokens than the necessary
+    new_max_len = (merged_ids_rep != pad_id).sum(1).max().item()
+    merged_ids_rep = merged_ids_rep[:, :new_max_len]
+
+    return merged_ids_rep
