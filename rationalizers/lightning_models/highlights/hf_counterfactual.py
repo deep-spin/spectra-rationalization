@@ -470,11 +470,13 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         if 't5' in self.cf_gen_arch:
             # fix inputs for t5 (replace chunked masked positions by a single sentinel token)
-            e, z, mask = make_input_for_t5(e, z, mask)
+            x, e, z, mask = make_input_for_t5(x, e, z, mask, pad_id=cf_constants.PAD_ID)
             # create sentinel tokens
             sentinel_ids = 32100 - (z > 0).long().cumsum(dim=-1)
             # clamp valid input ids (might glue last generations as T5 has only 100 sentinels)
             sentinel_ids = torch.clamp(sentinel_ids, min=32000, max=32099)
+            # fix x by replacing selected tokens by sentinel ids
+            x = (z > 0).long() * sentinel_ids + (z == 0).long() * x
             # get sentinel embeddings
             e_mask = self.cf_gen_emb_layer(sentinel_ids)
         else:
@@ -483,7 +485,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         # create mask for pretrained-LMs
         ext_mask = (1.0 - mask[:, None, None, :].to(self.dtype)) * -10000.0
 
-        # get the complement of z
+        # get the new mask
         z_mask = (z * mask.float()).unsqueeze(-1)
 
         # get mask for the generator LM
@@ -1130,14 +1132,17 @@ class CounterfactualRationalizer(BaseRationalizer):
         return output
 
 
-def make_input_for_t5(e, z, mask):
+def make_input_for_t5(x, e, z, mask, pad_id=0):
     """
     Replace masked positions by sentinel tokens
 
-    :param e: input sequence, torch.FloatTensor [B, T, D]
+    :param x: input sequence, torch.FloatTensor [B, T]
+    :param e: input embeddings, torch.FloatTensor [B, T, D]
     :param z: latent selection vector torch.FloarTensor [B, T]
     :param mask: mask for padding positions, torch.BoolTensor [B, T]
-    :return: t5_input: new input ids for T5, torch.FloatTensor [B, T', D],
+    :param pad_id: padding id
+    :return: t5_x: new input ids for T5, torch.FloatTensor [B, T'],
+             t5_e: new input embeddings for T5, torch.FloatTensor [B, T', D],
              t5_z: new latent selection vector, torch.FloatTensor [B, T']
              t5_mask: new mask for padding positions, torch.BoolTensor [B, T']
     """
@@ -1173,19 +1178,27 @@ def make_input_for_t5(e, z, mask):
     # so we use seq_len - 1 here, which will lead to pad tokens anyway
     idxs_all_but_succ = idxs_all_but_succ.masked_fill(~z_mask, seq_len - 1)
 
-    # expand as `e` so we can gather from it
-    idxs_all_but_succ = idxs_all_but_succ.unsqueeze(-1).expand(-1, -1, hdim)
-
-    # gather vectors from `e`
-    t5_input = e.gather(1, idxs_all_but_succ)
-
-    # the new mask is points to non padding tokens + eliminated tokens
+    # the new mask points to non padding tokens + eliminated tokens
     t5_mask = idxs_all_but_succ < mask.sum(-1).unsqueeze(-1)
 
     # the new mask is simply z_first (the places where sentinels were inserted)
     t5_z = z_first * t5_mask.float()
 
-    return t5_input, t5_z, t5_mask
+    # gather the new input ids and fix padding positions
+    t5_x = x.gather(1, idxs_all_but_succ)
+    t5_x = t5_x.masked_fill(~t5_mask, pad_id)
+
+    # expand as `e` so we can gather vectors from it
+    t5_e = e.gather(1, idxs_all_but_succ.unsqueeze(-1).expand(-1, -1, hdim))
+
+    # truncate to new max length
+    max_len = t5_mask.sum(-1).max().item()
+    t5_x = t5_x[:, :max_len]
+    t5_e = t5_e[:, :max_len]
+    t5_z = t5_z[:, :max_len]
+    t5_mask = t5_mask[:, :max_len]
+
+    return t5_x, t5_e, t5_z, t5_mask
 
 
 def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx_a=32000, idx_b=32099):
@@ -1241,7 +1254,17 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
         # for example:
         # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1])
 
-        n_x[n_x == 0] = counts[outputs]
+        # trick corner case:
+        # the model generated fewer items than the number of sentinel tokens
+        # in this case, we just count the first generated tokens
+        if (n_x == 0).sum() != outputs.sum():
+            shell_logger.warning('The number of generated chunks is less than the number of sentinel tokens. '
+                                 'Selecting only the first generated chunks...')
+            m1 = n_x == 0
+            m2 = m1.cumsum(0) <= outputs.sum()
+            n_x[m1 & m2] = counts[outputs]
+        else:
+            n_x[n_x == 0] = counts[outputs]
         # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1])
 
         # now we can repeat according to this new count, so we save them
