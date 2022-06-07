@@ -536,6 +536,9 @@ class CounterfactualRationalizer(BaseRationalizer):
                 logits = self.cf_gen_lm_head(h_tilde)
                 x_tilde = logits.argmax(dim=-1)
 
+                # or draw from a multinomial distribution:
+                # x_tilde = torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1)
+
                 # get gen_ids only for <mask> positions
                 z_1 = (z_mask > 0).squeeze(-1).long()
                 x_tilde = z_1 * x_tilde + (1 - z_1) * x
@@ -544,6 +547,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             # use the ST-gumbel-softmax trick
             logits = self.cf_gen_lm_head(h_tilde)
             x_tilde = nn.functional.gumbel_softmax(logits, hard=True, dim=-1)
+            # x_tilde.shape is (bs, seq_len, |V|)
 
             # get gen_ids only for <mask> positions
             z_1 = (z_mask > 0).long()
@@ -768,7 +772,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
             else:
                 # compute only the log prob of selected tokens
-                logp_xtilde = self.log_prob_x_tilde  # [B, T, |V|]
+                logp_xtilde = self.log_prob_x_tilde  # [B, T]
                 logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
                 logp_xtilde = torch.where(z_tilde == 0, 0, logp_xtilde)
                 logp_xtilde = logp_xtilde.masked_fill(~mask_tilde, 0)
@@ -1257,9 +1261,9 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
         # trick corner case:
         # the model generated fewer items than the number of sentinel tokens
         # in this case, we just count the first generated tokens
-        if (n_x == 0).sum() != outputs.sum():
-            shell_logger.warning('The number of generated chunks is less than the number of sentinel tokens. '
-                                 'Selecting only the first generated chunks...')
+        if (n_x == 0).sum() > outputs.sum():
+            shell_logger.warning('The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
+                                 'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum()))
             m1 = n_x == 0
             m2 = m1.cumsum(0) <= outputs.sum()
             n_x[m1 & m2] = counts[outputs]

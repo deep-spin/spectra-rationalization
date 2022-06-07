@@ -48,12 +48,14 @@ class HFRationalizer(BaseRationalizer):
         self.selection_mask = h_params.get("selection_mask", False)
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
+        self.use_t5_decoder = h_params.get("use_t5_decoder", False)
         self.mask_token_id = tokenizer.mask_token_id
 
         # generator module
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
         self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
         self.gen_encoder = self.gen_hf.encoder
+        self.gen_decoder = self.gen_hf.decoder if 't5' in self.gen_arch else None
         self.gen_hidden_size = self.gen_hf.config.hidden_size
         self.gen_scalar_mix = ScalarMixWithDropout(
             mixture_size=self.gen_hf.config.num_hidden_layers+1,
@@ -136,12 +138,18 @@ class HFRationalizer(BaseRationalizer):
         ext_mask = mask[:, None, None, :]  # add head and seq dimension
         ext_mask = ext_mask.to(dtype=self.dtype)  # fp16 compatibility
         ext_mask = (1.0 - ext_mask) * -10000.0  # will set softmax to zero
-        x_mask = torch.ones_like(x) * self.mask_token_id  # create an input with full mask tokens
 
         gen_e = self.gen_emb_layer(x)
         if self.use_scalar_mix:
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask, output_hidden_states=True)
+                if self.use_t5_decoder:
+                    gen_h = self.gen_encoder(
+                        inputs_embeds=gen_e,
+                        attention_mask=mask,
+                        encoder_hidden_states=gen_h.last_hidden_state,
+                        output_hidden_states=True,
+                    )
             else:
                 gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True)
             gen_h = self.gen_scalar_mix(gen_h.hidden_states, mask)
@@ -151,6 +159,12 @@ class HFRationalizer(BaseRationalizer):
             # gen_h = gen_h[selected_layers].mean(dim=0)
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask)
+                if self.use_t5_decoder:
+                    gen_h = self.gen_encoder(
+                        inputs_embeds=gen_e,
+                        attention_mask=mask,
+                        encoder_hidden_states=gen_h.last_hidden_state,
+                    )
             else:
                 gen_h = self.gen_encoder(gen_e, ext_mask)
             gen_h = gen_h.last_hidden_state
@@ -166,6 +180,13 @@ class HFRationalizer(BaseRationalizer):
             pred_e = gen_h
 
         if self.selection_vector == 'mask':
+            if 't5' in self.gen_arch:
+                # create an input with sentinel tokens
+                sentinel_ids = 32100 - (z > 0).long().cumsum(dim=-1)
+                x_mask = torch.clamp(sentinel_ids, min=32000, max=32099)
+            else:
+                # create an input with full mask tokens
+                x_mask = torch.ones_like(x) * self.mask_token_id
             pred_e_mask = self.pred_emb_layer(x_mask)
         else:
             pred_e_mask = torch.zeros_like(pred_e)

@@ -19,10 +19,10 @@ class LSTMEncoder(nn.Module):
         bidirectional: bool = True,
     ):
         """
-        :param in_features:
-        :param hidden_size:
-        :param batch_first:
-        :param bidirectional:
+        :param in_features: input size of the LSTM
+        :param hidden_size: hidden size of the LSTM
+        :param batch_first: if True, the input and output tensors are provided as (batch, seq, feature).
+        :param bidirectional: if True, the LSTM is bidirectional.
         """
         super(LSTMEncoder, self).__init__()
         self.lstm = nn.LSTM(
@@ -37,7 +37,7 @@ class LSTMEncoder(nn.Module):
         :param x: sequence of word embeddings, shape [B, T, E]
         :param mask: byte mask that is 0 for invalid positions, shape [B, T]
         :param lengths: the lengths of each input sequence [B]
-        :return:
+        :return: the encoded sequence, shape [B, H]
         """
         if lengths is None:
             lengths = mask.long().sum(-1).cpu()
@@ -63,6 +63,6 @@ class MaskedAverageEncoder(nn.Module):
         """
         :param x: sequence of word embeddings, shape [B, T, E]
         :param mask: byte mask that is 0 for invalid positions, shape [B, T]
-        :return:
+        :return: average of word embeddings, shape [B, E]
         """
         return masked_average(x, mask)
