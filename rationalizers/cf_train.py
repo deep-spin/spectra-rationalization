@@ -33,7 +33,7 @@ def run(args):
         shell_logger.info("Loading tokenizer: {}...".format(args.cf_tokenizer))
         cf_tokenizer = AutoTokenizer.from_pretrained(args.cf_tokenizer)
         dict_args['max_length'] = cf_tokenizer.model_max_length
-        cf_constants.update_constants(cf_tokenizer)
+    cf_constants.update_constants(cf_tokenizer)
 
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
