@@ -68,14 +68,19 @@ class HFRationalizer(BaseRationalizer):
             self.pred_encoder = LSTMEncoder(self.gen_hidden_size, self.gen_hidden_size, bidirectional=True)
             self.pred_hidden_size = self.gen_hidden_size * 2
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_decoder = None
+            self.pred_scalar_mix = None
         elif self.pred_arch == 'masked_average':
             self.pred_encoder = MaskedAverageEncoder()
             self.pred_hidden_size = self.gen_hidden_size
             self.pred_emb_layer = self.gen_emb_layer
+            self.pred_decoder = None
+            self.pred_scalar_mix = None
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
             self.pred_emb_layer = self.pred_hf.embeddings if 't5' not in self.pred_arch else self.pred_hf.shared
             self.pred_encoder = self.pred_hf.encoder
+            self.pred_decoder = self.pred_hf.decoder if 't5' in self.pred_arch else None
             self.pred_hidden_size = self.pred_hf.config.hidden_size
             self.pred_scalar_mix = ScalarMixWithDropout(
                 mixture_size=self.pred_hf.config.num_hidden_layers+1,
@@ -99,8 +104,12 @@ class HFRationalizer(BaseRationalizer):
         # freeze models
         if not self.gen_encoder_requires_grad:
             freeze_module(self.gen_encoder)
+            if self.gen_decoder is not None:
+                freeze_module(self.gen_decoder)
         if not self.pred_encoder_requires_grad:
             freeze_module(self.pred_encoder)
+            if self.pred_decoder is not None:
+                freeze_module(self.pred_decoder)
 
         # define output layer
         self.output_layer = nn.Sequential(
@@ -144,7 +153,7 @@ class HFRationalizer(BaseRationalizer):
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask, output_hidden_states=True)
                 if self.use_t5_decoder:
-                    gen_h = self.gen_encoder(
+                    gen_h = self.gen_decoder(
                         inputs_embeds=gen_e,
                         attention_mask=mask,
                         encoder_hidden_states=gen_h.last_hidden_state,
@@ -160,7 +169,7 @@ class HFRationalizer(BaseRationalizer):
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask)
                 if self.use_t5_decoder:
-                    gen_h = self.gen_encoder(
+                    gen_h = self.gen_decoder(
                         inputs_embeds=gen_e,
                         attention_mask=mask,
                         encoder_hidden_states=gen_h.last_hidden_state,
@@ -208,12 +217,25 @@ class HFRationalizer(BaseRationalizer):
             if self.use_scalar_mix:
                 if 't5' in self.pred_arch:
                     pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask, output_hidden_states=True)
+                    if self.use_t5_decoder:
+                        pred_h = self.pred_decoder(
+                            inputs_embeds=pred_e,
+                            attention_mask=mask,
+                            encoder_hidden_states=pred_h.last_hidden_state,
+                            output_hidden_states=True,
+                        )
                 else:
                     pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True)
                 pred_h = self.pred_scalar_mix(pred_h.hidden_states, mask)
             else:
                 if 't5' in self.pred_arch:
                     pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask)
+                    if self.use_t5_decoder:
+                        pred_h = self.pred_decoder(
+                            inputs_embeds=pred_e,
+                            attention_mask=mask,
+                            encoder_hidden_states=pred_h.last_hidden_state,
+                        )
                 else:
                     pred_h = self.pred_encoder(pred_e, ext_mask)
                 pred_h = pred_h.last_hidden_state
