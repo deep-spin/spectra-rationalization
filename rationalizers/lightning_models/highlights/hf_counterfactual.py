@@ -1383,8 +1383,10 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
         # the model generated fewer items than the number of sentinel tokens
         # in this case, we just count the first generated tokens
         if (n_x == 0).sum() > outputs.sum():
-            # shell_logger.warning('The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
-            #                      'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum()))
+            # shell_logger.warning(
+            #     'The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
+            #     'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum())
+            # )
             m1 = n_x == 0
             m2 = m1.cumsum(0) <= outputs.sum()
             n_x[m1 & m2] = counts[outputs]
