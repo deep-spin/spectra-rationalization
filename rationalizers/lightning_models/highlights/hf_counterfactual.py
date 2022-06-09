@@ -17,7 +17,7 @@ from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.scalar_mix import ScalarMixWithDropout
 from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
 from rationalizers.utils import get_z_stats, freeze_module, masked_average, get_rationales, unroll, get_html_rationales, \
-    save_rationales, save_counterfactuals
+    save_rationales, save_counterfactuals, load_torch_object, is_trainable
 
 shell_logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.selection_vector = h_params.get("selection_vector", 'zero')
         self.selection_mask = h_params.get("selection_mask", True)
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
+        self.use_t5_decoder = h_params.get("use_t5_decoder", False)
 
         # counterfactual:
         self.cf_gen_arch = h_params.get("cf_gen_arch", "bert-base-multilingual-cased")
@@ -80,6 +81,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_use_baseline = h_params.get('cf_use_baseline', True)
         self.cf_lbda = h_params.get('cf_lbda', 1.0)
         self.cf_generate_kwargs = h_params.get('cf_generate_kwargs', dict())
+        self.cf_use_t5_decoder = h_params.get("cf_use_t5_decoder", False)
+        self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
         # both:
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -93,6 +96,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         if self.cf_shared_gen_pred:
             assert self.cf_gen_arch == self.cf_pred_arch
 
+        ignored_weights = []
+
         ########################
         # factual flow
         ########################
@@ -102,6 +107,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
         self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
         self.gen_encoder = self.gen_hf.encoder
+        self.gen_decoder = self.gen_hf.decoder if 't5' in self.gen_arch else None
         self.gen_hidden_size = self.gen_hf.config.hidden_size
         self.gen_scalar_mix = ScalarMixWithDropout(
             mixture_size=self.gen_hf.config.num_hidden_layers+1,
@@ -123,18 +129,21 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.pred_hidden_size = self.gen_hidden_size * 2
             self.pred_emb_layer = self.gen_emb_layer
             self.pred_hf = None
+            self.pred_decoder = None
             self.pred_scalar_mix = None
         elif self.pred_arch == 'masked_average':
             self.pred_encoder = MaskedAverageEncoder()
             self.pred_hidden_size = self.gen_hidden_size
             self.pred_emb_layer = self.gen_emb_layer
             self.pred_hf = None
+            self.pred_decoder = None
             self.pred_scalar_mix = None
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch, dropout=self.dropout)
             self.pred_hidden_size = self.pred_hf.config.hidden_size
             self.pred_emb_layer = self.pred_hf.embeddings
             self.pred_encoder = self.pred_hf.encoder
+            self.pred_decoder = self.gen_hf.decoder if 't5' in self.pred_arch else None
             self.pred_scalar_mix = ScalarMixWithDropout(
                 mixture_size=self.pred_hf.config.num_hidden_layers+1,
                 dropout=self.dropout,
@@ -162,12 +171,26 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.log_prob_x_tilde = None
 
         # counterfactual generator module
-        if 't5' in self.cf_gen_arch:
+        if 'mice' in self.cf_gen_arch:
+            from transformers import T5Config, T5ForConditionalGeneration
+            max_length = 512
+            t5_config = T5Config.from_pretrained("t5-base", n_positions=max_length)
+            self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained("t5-base", config=t5_config)
+            self.cf_gen_hf.load_state_dict(load_torch_object(self.cf_gen_arch), strict=False)
+            # missing key: decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight
+            self.cf_gen_emb_layer = self.cf_gen_hf.shared
+            self.cf_gen_lm_head = self.cf_gen_hf.lm_head
+            self.cf_gen_encoder = self.cf_gen_hf.encoder
+            self.cf_gen_decoder = self.cf_gen_hf.decoder
+            ignored_weights = ['embed_tokens']
+        elif 't5' in self.cf_gen_arch:
             from transformers import T5ForConditionalGeneration
             self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
             self.cf_gen_emb_layer = self.cf_gen_hf.shared
             self.cf_gen_lm_head = self.cf_gen_hf.lm_head
             self.cf_gen_encoder = self.cf_gen_hf.encoder
+            self.cf_gen_decoder = self.cf_gen_hf.decoder
+            ignored_weights = ['embed_tokens']
         elif 'bert' in self.cf_gen_arch:
             from transformers import BertForMaskedLM
             bert_with_mlm_head = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
@@ -175,6 +198,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_gen_lm_head = bert_with_mlm_head.cls
             self.cf_gen_emb_layer = self.cf_gen_hf.embeddings
             self.cf_gen_encoder = self.cf_gen_hf.encoder
+            self.cf_gen_decoder = None
         else:
             raise NotImplementedError
         self.cf_gen_hidden_size = self.cf_gen_hf.config.hidden_size
@@ -189,18 +213,21 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_pred_hidden_size = self.cf_gen_hidden_size * 2
             self.cf_pred_emb_layer = self.cf_gen_emb_layer
             self.cf_pred_hf = None
+            self.cf_pred_decoder = None
             self.cf_pred_scalar_mix = None
         elif self.cf_pred_arch == 'masked_average':
             self.cf_pred_encoder = MaskedAverageEncoder()
             self.cf_pred_hidden_size = self.cf_gen_hidden_size
             self.cf_pred_emb_layer = self.cf_gen_emb_layer
             self.cf_pred_hf = None
+            self.cf_pred_decoder = None
             self.cf_pred_scalar_mix = None
         else:
             self.cf_pred_hf = self.cf_gen_hf if self.cf_shared_gen_pred else AutoModel.from_pretrained(self.cf_pred_arch)
             self.cf_pred_hidden_size = self.cf_pred_hf.config.hidden_size
             self.cf_pred_emb_layer = self.cf_pred_hf.embeddings if 't5' not in self.cf_pred_arch else self.cf_pred_hf.shared
             self.cf_pred_encoder = self.cf_pred_hf.encoder
+            self.cf_pred_decoder = self.cf_pred_hf.decoder if 't5' in self.cf_pred_arch else None
             self.cf_pred_scalar_mix = ScalarMixWithDropout(
                 mixture_size=self.cf_pred_hf.config.num_hidden_layers+1,
                 dropout=self.cf_dropout,
@@ -238,18 +265,32 @@ class CounterfactualRationalizer(BaseRationalizer):
         # freeze models (and set to eval mode to disable dropout)
         if not self.gen_encoder_requires_grad:
             freeze_module(self.gen_encoder)
-            freeze_module(self.gen_scalar_mix)
+            if self.gen_decoder is not None:
+                freeze_module(self.gen_decoder)
+            if self.gen_scalar_mix is not None:
+                freeze_module(self.gen_scalar_mix)
+
         if not self.pred_encoder_requires_grad:
             freeze_module(self.pred_encoder)
+            if self.pred_decoder is not None:
+                freeze_module(self.pred_decoder)
             if self.pred_scalar_mix is not None:
                 freeze_module(self.pred_scalar_mix)
+
         if not self.cf_gen_encoder_requires_grad:
-            freeze_module(self.cf_gen_encoder)
-            freeze_module(self.cf_gen_scalar_mix)
+            freeze_module(self.cf_gen_encoder, ignored_weights=ignored_weights)
+            if self.cf_gen_decoder is not None:
+                freeze_module(self.cf_gen_decoder, ignored_weights=ignored_weights)
+            if self.cf_gen_scalar_mix is not None:
+                freeze_module(self.cf_gen_scalar_mix, ignored_weights=ignored_weights)
+
         if not self.cf_gen_lm_head_requires_grad:
-            freeze_module(self.cf_gen_lm_head)
+            freeze_module(self.cf_gen_lm_head, ignored_weights=ignored_weights)
+
         if not self.cf_pred_encoder_requires_grad:
             freeze_module(self.cf_pred_encoder)
+            if self.cf_pred_decoder is not None:
+                freeze_module(self.cf_pred_decoder)
             if self.cf_pred_scalar_mix is not None:
                 freeze_module(self.cf_pred_scalar_mix)
 
@@ -305,6 +346,10 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_train_accuracy = torchmetrics.Accuracy()
         self.cf_val_accuracy = torchmetrics.Accuracy()
         self.cf_test_accuracy = torchmetrics.Accuracy()
+
+        # manual check requires_grad for all modules
+        for name, module in self.named_children():
+            shell_logger.info('is_trainable({}): {}'.format(name, is_trainable(module)))
 
     def configure_optimizers(self):
         """Configure optimizers and lr schedulers for Trainer."""
@@ -364,11 +409,24 @@ class CounterfactualRationalizer(BaseRationalizer):
         # factual flow
         z, y_hat = self.get_factual_flow(x, mask=mask)
 
-        # align factual z with counterfactual ids
-        z_cf = repeat_interleave_and_pad(z, c_cf, pad_id=cf_constants.PAD_ID)
+        # in case the generators do not have the same vocab
+        if self.gen_arch != self.cf_gen_arch:
+            # align factual z with counterfactual ids
+            z_cf = repeat_interleave_and_pad(z, c_cf, pad_id=cf_constants.PAD_ID)
 
-        # cut out reminiscent pads (they were repeated at the end of each sequence)
-        z_cf = z_cf[:, :x_cf.shape[1]]
+            # cut out reminiscent pads (they were repeated at the end of each sequence)
+            z_cf = z_cf[:, :x_cf.shape[1]]
+
+        # otherwise we reuse the same z
+        else:
+            z_cf = z
+
+        # prepend label for mice supervision-mode
+        # todo: write generic function for other datasets
+        if 'mice' in self.cf_gen_arch and self.cf_prepend_label_for_mice:
+            neg_id = self.cf_tokenizer.vocab['▁negative']
+            pos_id = self.cf_tokenizer.vocab['▁positive']
+            x_cf, z_cf, mask_cf = prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id, pos_id)
 
         # counterfactual flow
         x_tilde, z_tilde, mask_tilde, y_tilde_hat = self.get_counterfactual_flow(x_cf, z_cf, mask=mask_cf)
@@ -393,6 +451,13 @@ class CounterfactualRationalizer(BaseRationalizer):
         if self.use_scalar_mix:
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask, output_hidden_states=True)
+                if self.use_t5_decoder:
+                    gen_h = self.gen_decoder(
+                        inputs_embeds=gen_e,
+                        attention_mask=mask,
+                        encoder_hidden_states=gen_h.last_hidden_state,
+                        output_hidden_states=True,
+                    )
             else:
                 gen_h = self.gen_encoder(gen_e, ext_mask, output_hidden_states=True)
             gen_h = self.gen_scalar_mix(gen_h.hidden_states, mask)
@@ -402,6 +467,12 @@ class CounterfactualRationalizer(BaseRationalizer):
             # gen_h = gen_h[selected_layers].mean(dim=0)
             if 't5' in self.gen_arch:
                 gen_h = self.gen_encoder(inputs_embeds=gen_e, attention_mask=mask)
+                if self.use_t5_decoder:
+                    gen_h = self.gen_decoder(
+                        inputs_embeds=gen_e,
+                        attention_mask=mask,
+                        encoder_hidden_states=gen_h.last_hidden_state,
+                    )
             else:
                 gen_h = self.gen_encoder(gen_e, ext_mask)
             gen_h = gen_h.last_hidden_state
@@ -417,8 +488,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             pred_e = gen_h
 
         if self.selection_vector == 'mask':
-            # create an input with full mask tokens
-            x_mask = torch.ones_like(x) * self.mask_token_id
+            if 't5' in self.gen_arch:
+                # create an input with sentinel tokens
+                sentinel_ids = 32100 - (z > 0).long().cumsum(dim=-1)
+                x_mask = torch.clamp(sentinel_ids, min=32000, max=32099)
+            else:
+                # create an input with full mask tokens
+                x_mask = torch.ones_like(x) * self.mask_token_id
             pred_e_mask = self.pred_emb_layer(x_mask)
         else:
             pred_e_mask = torch.zeros_like(pred_e)
@@ -440,12 +516,24 @@ class CounterfactualRationalizer(BaseRationalizer):
             if self.use_scalar_mix:
                 if 't5' in self.pred_arch:
                     pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask, output_hidden_states=True)
+                    if self.use_t5_decoder:
+                        pred_h = self.pred_decoder(
+                            inputs_embeds=pred_e,
+                            attention_mask=mask,
+                            encoder_hidden_states=pred_h.last_hidden_state,
+                        )
                 else:
                     pred_h = self.pred_encoder(pred_e, ext_mask, output_hidden_states=True)
                 pred_h = self.pred_scalar_mix(pred_h.hidden_states, mask)
             else:
                 if 't5' in self.pred_arch:
                     pred_h = self.pred_encoder(inputs_embeds=pred_e, attention_mask=mask)
+                    if self.use_t5_decoder:
+                        pred_h = self.pred_decoder(
+                            inputs_embeds=pred_e,
+                            attention_mask=mask,
+                            encoder_hidden_states=pred_h.last_hidden_state,
+                        )
                 else:
                     pred_h = self.pred_encoder(pred_e, ext_mask)
                 pred_h = pred_h.last_hidden_state
@@ -464,7 +552,6 @@ class CounterfactualRationalizer(BaseRationalizer):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :return: (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
-
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
 
@@ -518,23 +605,48 @@ class CounterfactualRationalizer(BaseRationalizer):
         # sample from LM
         if self.cf_use_reinforce:
             if 't5' in self.cf_gen_arch:
+                # recover hidden states from the encoder (.generate() changes the hidden states)
+                encoder_hidden_states = cf_gen_enc_out.last_hidden_state
+
+                # deal with min and max length
+                gen_kwargs = self.cf_generate_kwargs.copy()
+                if 'max_length' not in self.cf_generate_kwargs:
+                    gen_kwargs['max_length'] = 512
+                if self.cf_generate_kwargs.get('min_length', None) == 'original':
+                    # set the minimum length to be at least equal to the number of
+                    # sentinel tokens (times 2 since T5 has to generate sentinels too)
+                    num_sentinels = (z_mask > 0).long().sum(-1).min().item()
+                    gen_kwargs['min_length'] = min(gen_kwargs['max_length'], num_sentinels * 2)
+
                 # sample autoregressively
+                # todo: add logits processor to avoid generating sentinel tokens when we had sentinel tokens
                 gen_out = self.cf_gen_hf.generate(
                     encoder_outputs=cf_gen_enc_out,
                     attention_mask=mask.long(),
-                    output_scores=True,
                     return_dict_in_generate=True,
-                    **self.cf_generate_kwargs
+                    **gen_kwargs
                 )
+                # clear memory because generation is done
+                # torch.cuda.empty_cache()
+
                 # idk why but t5 generates a pad symbol as the first token
                 # so we cut it out for all samples in the batch
                 # (this happens only for .sequences)
                 x_tilde = gen_out.sequences[:, 1:]
-                logits = torch.stack(gen_out.scores).transpose(0, 1)
+
+                # get the logits for x_tilde
+                cf_gen_dec_out = self.cf_gen_decoder(
+                    input_ids=x_tilde,
+                    attention_mask=(x_tilde != cf_constants.PAD_ID).long(),
+                    encoder_hidden_states=encoder_hidden_states
+                )
+                logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)
+
             else:
                 # sample directly from the output layer
                 logits = self.cf_gen_lm_head(h_tilde)
                 x_tilde = logits.argmax(dim=-1)
+                x_tilde = torch.multinomial(logits.sofmax(dim=-1), num_samples=1)
 
                 # or draw from a multinomial distribution:
                 # x_tilde = torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1)
@@ -1088,6 +1200,14 @@ class CounterfactualRationalizer(BaseRationalizer):
                 on_step=False,
                 on_epoch=True,
             )
+            self.log(
+                f"{prefix}_cf_accuracy",
+                dict_metrics[f"{prefix}_cf_accuracy"],
+                prog_bar=False,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+            )
 
         else:
             avg_outputs[f"avg_{prefix}_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
@@ -1242,6 +1362,7 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
         # counts = tensor([1, 2, 1, 3, 3])
 
         # mask out invalid outputs due to end-of-sequence generation
+        # (times 2 because sentinel tokens are also produced in the output)
         m = torch.arange(len(outputs), device=z_x.device) < (z_x.sum() * 2)
         # for example:
         # m = tensor([1, 1, 0, 0, 0])
@@ -1262,8 +1383,8 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
         # the model generated fewer items than the number of sentinel tokens
         # in this case, we just count the first generated tokens
         if (n_x == 0).sum() > outputs.sum():
-            shell_logger.warning('The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
-                                 'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum()))
+            # shell_logger.warning('The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
+            #                      'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum()))
             m1 = n_x == 0
             m2 = m1.cumsum(0) <= outputs.sum()
             n_x[m1 & m2] = counts[outputs]
@@ -1329,3 +1450,24 @@ def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32
     merged_ids_rep = merged_ids_rep[:, :new_max_len]
 
     return merged_ids_rep
+
+
+def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=1465):
+    # manually create the ids of the template:
+    # prefix_ids = tokenizer.tokenize('label: positive. input:')
+    # prefix_ids = tokenizer.tokenize('label: negative. input:')
+    prefix_ids = torch.tensor([3783, 10, -1, 5, 3785, 10]).to(x_cf.device)
+    prefix_ids = prefix_ids.unsqueeze(0).expand(x_cf.shape[0], -1)
+    # replace -1 by neg or pos ids according to the factual prediction
+    y_hat_ids = torch.where(y_hat.argmax(-1) == 0, neg_id, pos_id)
+    # merge prefix_ids and y_hat_ids
+    y_hat_ids = y_hat_ids.unsqueeze(-1).repeat(1, prefix_ids.shape[-1])
+    prefix_m = (prefix_ids == -1).long()
+    prefix_ids = prefix_m * y_hat_ids + (1 - prefix_m) * prefix_ids
+    # prepend prefix to the input
+    x_cf = torch.cat((prefix_ids, x_cf), dim=1)
+    # and also deal with z and mask (prepend 1s)
+    prefix_z = prefix_mask = torch.ones_like(prefix_ids)
+    z_cf = torch.cat((prefix_z, z_cf), dim=1)
+    mask_cf = torch.cat((prefix_mask, mask_cf), dim=1)
+    return x_cf, z_cf, mask_cf

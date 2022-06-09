@@ -265,14 +265,24 @@ def unroll(list_of_lists, rec=False):
     return new_list
 
 
-def freeze_module(module: torch.nn.Module):
-    for param in module.parameters():
+def freeze_module(module: torch.nn.Module, ignored_weights: list = None):
+    if ignored_weights is None:
+        ignored_weights = []
+    for name, param in module.named_parameters():
+        if len(ignored_weights) > 0 and any(w in name for w in ignored_weights):
+            continue
         param.requires_grad = False
 
 
 def unfreeze_module(module: torch.nn.Module):
     for param in module.parameters():
         param.requires_grad = True
+
+
+def is_trainable(module: torch.nn.Module):
+    if module is None:
+        return None
+    return all(p.requires_grad for p in module.parameters())
 
 
 def masked_average(tensor, mask):
