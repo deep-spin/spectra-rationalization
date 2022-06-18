@@ -351,6 +351,10 @@ class CounterfactualRationalizer(BaseRationalizer):
         for name, module in self.named_children():
             shell_logger.info('is_trainable({}): {}'.format(name, is_trainable(module)))
 
+        # manual update constants again
+        constants.update_constants(self.tokenizer)
+        cf_constants.update_constants(self.cf_tokenizer)
+
     def configure_optimizers(self):
         """Configure optimizers and lr schedulers for Trainer."""
         ff_params = chain(
@@ -619,7 +623,6 @@ class CounterfactualRationalizer(BaseRationalizer):
                     gen_kwargs['min_length'] = min(gen_kwargs['max_length'], num_sentinels * 2)
 
                 # sample autoregressively
-                # todo: add logits processor to avoid generating sentinel tokens when we had sentinel tokens
                 gen_out = self.cf_gen_hf.generate(
                     encoder_outputs=cf_gen_enc_out,
                     attention_mask=mask.long(),
@@ -816,7 +819,7 @@ class CounterfactualRationalizer(BaseRationalizer):
 
     def get_counterfactual_loss(self, y_hat, y, z_tilde, mask_tilde, prefix):
         """
-        Compute loss for the conterfactual flow.
+        Compute loss for the counterfactual flow.
 
         :param y_hat: predictions from SentimentPredictor. Torch.Tensor of shape [B, C]
         :param y: tensor with gold labels. torch.BoolTensor of shape [B]
@@ -917,6 +920,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             stats["cf_cost_p"] = loss.item()
 
             main_loss = loss + cost_logpz
+
+        # ideas for later:
+        # logits = - torch.nn.functional.kl_divergence(original_bert_dist, torch.softmax(logits))
+        # nll_loss = nn.NLLLoss()(logits)
+        # x_tilde = sparsemax(x_tilde, dim=-1)
+        # x_tilde = softmax(x_tilde, dim=-1)
+        # logits = alpha * self.adaptor(logits) + (1 - alpha) * logits
 
         # latent selection stats
         num_0, num_c, num_1, total = get_z_stats(z_tilde, mask_tilde)
@@ -1048,7 +1058,9 @@ class CounterfactualRationalizer(BaseRationalizer):
             z_1 = (z_tilde > 0).long()
             gen_ids = x_tilde if self.cf_use_reinforce else x_tilde.argmax(dim=-1)
             gen_ids = z_1 * gen_ids + (1 - z_1) * input_ids
+
         cfs = [self.cf_tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
+        cf_lengths = (gen_ids != cf_constants.PAD_ID).long().sum(-1).tolist()
 
         # output to be stacked across iterations
         output = {
@@ -1066,7 +1078,7 @@ class CounterfactualRationalizer(BaseRationalizer):
             f"{prefix}_cf_labels": y_cf.tolist(),
             f"{prefix}_cf_predictions": y_tilde_hat,
             f"{prefix}_cf_z": z_tilde,
-            f"{prefix}_cf_lengths": batch["cf_lengths"].tolist(),
+            f"{prefix}_cf_lengths": cf_lengths,
         }
 
         if "annotations" in batch.keys():
@@ -1305,12 +1317,14 @@ def make_input_for_t5(x, e, z, mask, pad_id=0):
     # the new mask points to non padding tokens + eliminated tokens
     t5_mask = idxs_all_but_succ < mask.sum(-1).unsqueeze(-1)
 
-    # the new mask is simply z_first (the places where sentinels were inserted)
-    t5_z = z_first * t5_mask.float()
-
     # gather the new input ids and fix padding positions
     t5_x = x.gather(1, idxs_all_but_succ)
     t5_x = t5_x.masked_fill(~t5_mask, pad_id)
+
+    # the new z is simply z_first (the places where sentinels were inserted)
+    # t5_z = z_first * t5_mask.float()
+    t5_z = z_first.gather(1, idxs_all_but_succ)
+    t5_z = t5_z.masked_fill(~t5_mask, 0)
 
     # expand as `e` so we can gather vectors from it
     t5_e = e.gather(1, idxs_all_but_succ.unsqueeze(-1).expand(-1, -1, hdim))
@@ -1455,6 +1469,24 @@ def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32
 
 
 def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=1465):
+    """
+    Prepend a label to the generated ids for MICE T5 using the following format:
+
+    `label: <LABEL>. input: <TOKENS>`
+
+    where <LABEL> is either `negative` or `positive` and <TOKENS> is the input tokens.
+
+    :param y_hat: classifier logits, tensor of shape [B, T, 2]
+    :param x_cf: input ids, tensor of shape [B, T]
+    :param z_cf: latent selections, tensor of shape [B, T]
+    :param mask_cf: input mask, tensor of shape [B, T]
+    :param neg_id: id of the `negative` token
+    :param pos_id: id of the `positive` token
+    :return:
+        x_cf: tensors of shape [B, T + 6] with the prepended label template
+        z_cf: tensors of shape [B, T + 6] with prepended `1s`
+        mask_cf: tensors of shape [B, T + 6] with prepended `1s`
+    """
     # manually create the ids of the template:
     # prefix_ids = tokenizer.tokenize('label: positive. input:')
     # prefix_ids = tokenizer.tokenize('label: negative. input:')
@@ -1468,8 +1500,9 @@ def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=14
     prefix_ids = prefix_m * y_hat_ids + (1 - prefix_m) * prefix_ids
     # prepend prefix to the input
     x_cf = torch.cat((prefix_ids, x_cf), dim=1)
-    # and also deal with z and mask (prepend 1s)
-    prefix_z = prefix_mask = torch.ones_like(prefix_ids)
-    z_cf = torch.cat((prefix_z, z_cf), dim=1)
-    mask_cf = torch.cat((prefix_mask, mask_cf), dim=1)
+    # and also deal with z and mask
+    prefix_zeros = torch.zeros_like(prefix_ids)
+    prefix_ones = torch.ones_like(prefix_ids)
+    z_cf = torch.cat((prefix_zeros, z_cf), dim=1)
+    mask_cf = torch.cat((prefix_ones, mask_cf), dim=1)
     return x_cf, z_cf, mask_cf
