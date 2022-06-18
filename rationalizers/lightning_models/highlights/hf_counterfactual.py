@@ -1493,7 +1493,8 @@ def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=14
     prefix_ids = torch.tensor([3783, 10, -1, 5, 3785, 10]).to(x_cf.device)
     prefix_ids = prefix_ids.unsqueeze(0).expand(x_cf.shape[0], -1)
     # replace -1 by neg or pos ids according to the factual prediction
-    y_hat_ids = torch.where(y_hat.argmax(-1) == 0, neg_id, pos_id)
+    # but reverse labels to get counterfactuals
+    y_hat_ids = torch.where(y_hat.argmax(-1) == 0, pos_id, neg_id)
     # merge prefix_ids and y_hat_ids
     y_hat_ids = y_hat_ids.unsqueeze(-1).repeat(1, prefix_ids.shape[-1])
     prefix_m = (prefix_ids == -1).long()
