@@ -168,7 +168,8 @@ class CounterfactualRationalizer(BaseRationalizer):
         # for reinforce
         self.n_points = 0
         self.mean_baseline = 0
-        self.log_prob_x_tilde = None
+        self.cf_x_tilde = None
+        self.cf_log_prob_x_tilde = None
 
         # counterfactual generator module
         if 'mice' in self.cf_gen_arch:
@@ -648,15 +649,16 @@ class CounterfactualRationalizer(BaseRationalizer):
             else:
                 # sample directly from the output layer
                 logits = self.cf_gen_lm_head(h_tilde)
-                x_tilde = logits.argmax(dim=-1)
+                # x_tilde = logits.argmax(dim=-1)
                 x_tilde = torch.multinomial(logits.sofmax(dim=-1), num_samples=1)
-
-                # or draw from a multinomial distribution:
-                # x_tilde = torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1)
 
                 # get gen_ids only for <mask> positions
                 z_1 = (z_mask > 0).squeeze(-1).long()
                 x_tilde = z_1 * x_tilde + (1 - z_1) * x
+
+            # save variables for computing REINFORCE loss later
+            self.cf_x_tilde = x_tilde.clone()
+            self.cf_log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         else:
             # use the ST-gumbel-softmax trick
@@ -668,9 +670,6 @@ class CounterfactualRationalizer(BaseRationalizer):
             z_1 = (z_mask > 0).long()
             x_one_hot = nn.functional.one_hot(x, num_classes=x_tilde.shape[-1])
             x_tilde = z_1 * x_tilde + (1 - z_1) * x_one_hot
-
-        # save log probas for later
-        self.log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         # expand z to account for the new tokens in case of using t5
         if 't5' in self.cf_gen_arch:
@@ -701,8 +700,15 @@ class CounterfactualRationalizer(BaseRationalizer):
                 z_tilde = z_tilde[:, :expanded_seq_len]
                 mask_tilde = mask_tilde[:, :expanded_seq_len]
 
+            # remove labels in case they were prepended for mice t5
+            # (the prepended prompt has 6 tokens)
+            if 'mice' in self.cf_gen_arch and self.cf_prepend_label_for_mice:
+                x_tilde = x_tilde[:, 6:]
+                z_tilde = z_tilde[:, 6:]
+                mask_tilde = mask_tilde[:, 6:]
+
             # if we generated too much, there isn't much we can do besides truncating
-            if expanded_seq_len > 512 and 'bert' in self.cf_pred_arch:
+            if x_tilde.shape[-1] > 512 and 'bert' in self.cf_pred_arch:
                 x_tilde = x_tilde[:, :512]
                 z_tilde = z_tilde[:, :512]
                 mask_tilde = mask_tilde[:, :512]
@@ -876,22 +882,35 @@ class CounterfactualRationalizer(BaseRationalizer):
 
             # log P(x_tilde | s; phi)
             if 't5' in self.cf_gen_arch:
-                # compute log prob of all sampled tokens (excluding sentinels)
-                logp_xtilde = self.log_prob_x_tilde  # [B, T, |V|]
-                gen_ids = logp_xtilde.argmax(dim=-1)
+                # x:        the           <input_id_0> is on the <input_id_1>
+                # x_tilde: <input_id_0>  long book    <input_id_1> table </s>
+                gen_ids = self.cf_x_tilde  # [B, T]
+
+                # recover log prob of all sampled tokens (including sentinels)
+                logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+
+                # compute sentinel and padding mask
                 gen_mask = ~((gen_ids >= 32000) & (gen_ids <= 32099))  # non-sentinel
                 gen_mask &= (gen_ids != cf_constants.PAD_ID)  # non-padding
-                logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
-                logp_xtilde = logp_xtilde.masked_fill(~gen_mask, 0)
+
+                # get probas of x_tilde [B, T]
+                logp_xtilde = logp_xtilde.gather(-1, gen_ids.unsqueeze(-1)).squeeze(-1)
+
+                # weighted average (ignore sentinels and pad)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
             else:
-                # compute only the log prob of selected tokens
-                logp_xtilde = self.log_prob_x_tilde  # [B, T]
-                logp_xtilde = logp_xtilde.max(dim=-1)[0]  # get the probas of the argmax only
-                logp_xtilde = torch.where(z_tilde == 0, 0, logp_xtilde)
-                logp_xtilde = logp_xtilde.masked_fill(~mask_tilde, 0)
-                log_xtilde_scalar = (logp_xtilde * mask_tilde.float()).sum(1) / mask_tilde.float().sum(1)
+                # x:        the  <mask> is on the <mask>
+                # x_tilde:  the  book   is on the table
+                gen_ids = self.cf_x_tilde  # [B, T]
+                logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
+                gen_mask = gen_ids != cf_constants.PAD_ID
+                # get probas of x_tilde
+                logp_xtilde = logp_xtilde.gather(-1, gen_ids.unsqueeze(-1)).squeeze(-1)
+                # compute only the log prob of new sampled tokens
+                logp_xtilde = logp_xtilde * (z_tilde > 0).float()
+                # weighted average (ignore sentinels and pad)
+                log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
             # compute generator loss
             cost_vec = loss_vec.detach()
