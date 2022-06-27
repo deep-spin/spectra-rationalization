@@ -7,7 +7,7 @@ import torch
 import torchmetrics
 import wandb
 from torch import nn
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, top_k_top_p_filtering
 
 from rationalizers import cf_constants, constants
 from rationalizers.builders import build_optimizer, build_scheduler
@@ -650,7 +650,13 @@ class CounterfactualRationalizer(BaseRationalizer):
                 # sample directly from the output layer
                 logits = self.cf_gen_lm_head(h_tilde)
                 # x_tilde = logits.argmax(dim=-1)
-                x_tilde = torch.multinomial(logits.sofmax(dim=-1), num_samples=1)
+                x_tilde = sample_from_logits(
+                    logits=logits,
+                    top_k=self.cf_generate_kwargs.get('top_k', 0),
+                    top_p=self.cf_generate_kwargs.get('top_p', 1.0),
+                    min_tokens_to_keep=self.cf_generate_kwargs.get('min_tokens_to_keep', 1.0),
+                    num_samples=self.cf_generate_kwargs.get('num_return_sequences', 1),
+                )
 
                 # get gen_ids only for <mask> positions
                 z_1 = (z_mask > 0).squeeze(-1).long()
@@ -670,6 +676,10 @@ class CounterfactualRationalizer(BaseRationalizer):
             z_1 = (z_mask > 0).long()
             x_one_hot = nn.functional.one_hot(x, num_classes=x_tilde.shape[-1])
             x_tilde = z_1 * x_tilde + (1 - z_1) * x_one_hot
+
+            # save variables for computing penalties later
+            self.cf_x_tilde = x_tilde.clone()
+            self.cf_log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
 
         # expand z to account for the new tokens in case of using t5
         if 't5' in self.cf_gen_arch:
@@ -904,11 +914,10 @@ class CounterfactualRationalizer(BaseRationalizer):
                 # x_tilde:  the  book   is on the table
                 gen_ids = self.cf_x_tilde  # [B, T]
                 logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
-                gen_mask = gen_ids != cf_constants.PAD_ID
+                # compute only the log prob of new sampled tokens
+                gen_mask = (gen_ids != cf_constants.PAD_ID) & (z_tilde > 0)
                 # get probas of x_tilde
                 logp_xtilde = logp_xtilde.gather(-1, gen_ids.unsqueeze(-1)).squeeze(-1)
-                # compute only the log prob of new sampled tokens
-                logp_xtilde = logp_xtilde * (z_tilde > 0).float()
                 # weighted average (ignore sentinels and pad)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
@@ -940,12 +949,22 @@ class CounterfactualRationalizer(BaseRationalizer):
 
             main_loss = loss + cost_logpz
 
-        # ideas for later:
-        # logits = - torch.nn.functional.kl_divergence(original_bert_dist, torch.softmax(logits))
-        # nll_loss = nn.NLLLoss()(logits)
-        # x_tilde = sparsemax(x_tilde, dim=-1)
-        # x_tilde = softmax(x_tilde, dim=-1)
-        # logits = alpha * self.adaptor(logits) + (1 - alpha) * logits
+        # ideas for later (penalties):
+        # use an "adaptor" layer which is a pretrained LM, such that new logits ~= adaptor logits
+        # logits = alpha * self.adaptor_logits(x) + (1 - alpha) * self.cf_flow_logits(x)
+
+        # approximate original distribution with the new distribution
+        # penalty += - torch.nn.functional.kl_divergence(original_bert_dist, torch.softmax(logits))
+
+        # use a fluency loss:
+        # lm = https://huggingface.co/distilgpt2
+        # penalty += perplexity_pretrained_lm(x_tilde)
+
+        # use similarity loss:
+        # penalty += similarity_with_original(x_tilde_emb_i, x_emb) for i in range(K)
+
+        # use a diversity loss:
+        # penalty += det(1 / 1 + sim(x_tilde_i, x_tilde_j))
 
         # latent selection stats
         num_0, num_c, num_1, total = get_z_stats(z_tilde, mask_tilde)
@@ -1526,3 +1545,18 @@ def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=14
     z_cf = torch.cat((prefix_zeros, z_cf), dim=1)
     mask_cf = torch.cat((prefix_ones, mask_cf), dim=1)
     return x_cf, z_cf, mask_cf
+
+
+def sample_from_logits(logits, top_k=0, top_p=1.0, min_tokens_to_keep=1, num_samples=1):
+    """
+    Sample from logits.
+    """
+    filtered_logits = top_k_top_p_filtering(logits,
+                                            top_k=top_k,
+                                            top_p=top_p,
+                                            min_tokens_to_keep=min_tokens_to_keep)
+    filtered_probas = torch.softmax(filtered_logits, dim=-1)
+    filtered_probas = filtered_probas.view(-1, filtered_probas.shape[-1])
+    sample = torch.multinomial(filtered_probas, num_samples=num_samples)
+    sample = sample.view(logits.shape[0], logits.shape[1], num_samples)
+    return sample
