@@ -1,6 +1,7 @@
 from rationalizers.lightning_models.highlights.bernoulli import BernoulliRationalizer
 from rationalizers.lightning_models.highlights.hf import HFRationalizer
 from rationalizers.lightning_models.highlights.hf_counterfactual import CounterfactualRationalizer
+from rationalizers.lightning_models.highlights.hf_self_counterfactual import SelfCounterfactualRationalizer
 from rationalizers.lightning_models.highlights.hf_gen import GenHFRationalizer
 from rationalizers.lightning_models.highlights.hf_single import HFRationalizerSingle
 from rationalizers.lightning_models.highlights.spectra import SPECTRARationalizer
@@ -24,6 +25,7 @@ available_models = {
     "hf_single": HFRationalizerSingle,
     "hf_gen": GenHFRationalizer,
     "hf_counterfactual": CounterfactualRationalizer,
+    "hf_self_counterfactual": SelfCounterfactualRationalizer,
     "sparsemap_faithfulmatching": SparseMAPFaithfulMatching,
     "gumbel_matching": GumbelMatching,
     "relaxed_bernoulli": RelaxedBernoulliRationalizer,

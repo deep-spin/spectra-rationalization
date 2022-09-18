@@ -107,15 +107,16 @@ class ImdbDataModule(BaseDataModule):
 
     def prepare_data(self):
         # download data, prepare and store it (do not assign to self vars)
-        _ = hf_datasets.load_dataset(
-            path=self.path,
-            save_infos=True,
-        )
+        # _ = hf_datasets.load_dataset(
+        #     path=self.path,
+        #     save_infos=True,
+        # )
+        pass
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(path=self.path,)
-        modified_dataset = hf_datasets.load_dataset("imdb")["train"].train_test_split(test_size=0.1)
+        modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
         self.dataset["train"] = modified_dataset["train"]
         self.dataset["validation"] = modified_dataset["test"]
 

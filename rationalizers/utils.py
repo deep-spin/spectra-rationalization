@@ -282,7 +282,7 @@ def unfreeze_module(module: torch.nn.Module):
 def is_trainable(module: torch.nn.Module):
     if module is None:
         return None
-    return all(p.requires_grad for p in module.parameters())
+    return any(p.requires_grad for p in module.parameters())
 
 
 def masked_average(tensor, mask):

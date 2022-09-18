@@ -53,7 +53,7 @@ class HFRationalizer(BaseRationalizer):
 
         # generator module
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
-        self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
+        self.gen_emb_layer = self.gen_hf.get_input_embeddings()
         self.gen_encoder = self.gen_hf.encoder
         self.gen_decoder = self.gen_hf.decoder if 't5' in self.gen_arch else None
         self.gen_hidden_size = self.gen_hf.config.hidden_size
@@ -78,7 +78,7 @@ class HFRationalizer(BaseRationalizer):
             self.pred_scalar_mix = None
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch)
-            self.pred_emb_layer = self.pred_hf.embeddings if 't5' not in self.pred_arch else self.pred_hf.shared
+            self.pred_emb_layer = self.pred_hf.get_input_embeddings()
             self.pred_encoder = self.pred_hf.encoder
             self.pred_decoder = self.pred_hf.decoder if 't5' in self.pred_arch else None
             self.pred_hidden_size = self.pred_hf.config.hidden_size

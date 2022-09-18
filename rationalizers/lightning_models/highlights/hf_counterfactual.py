@@ -1,5 +1,6 @@
 import logging
 import os
+from copy import deepcopy
 from itertools import chain
 
 import numpy as np
@@ -7,7 +8,7 @@ import torch
 import torchmetrics
 import wandb
 from torch import nn
-from transformers import AutoModel, AutoTokenizer, top_k_top_p_filtering
+from transformers import AutoModel, AutoModelForSequenceClassification, top_k_top_p_filtering, AutoModelForSeq2SeqLM
 
 from rationalizers import cf_constants, constants
 from rationalizers.builders import build_optimizer, build_scheduler
@@ -59,6 +60,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.selection_mask = h_params.get("selection_mask", True)
         self.selection_faithfulness = h_params.get("selection_faithfulness", True)
         self.use_t5_decoder = h_params.get("use_t5_decoder", False)
+        self.ff_lbda = h_params.get('ff_lbda', 1.0)
 
         # counterfactual:
         self.cf_gen_arch = h_params.get("cf_gen_arch", "bert-base-multilingual-cased")
@@ -83,6 +85,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.cf_generate_kwargs = h_params.get('cf_generate_kwargs', dict())
         self.cf_use_t5_decoder = h_params.get("cf_use_t5_decoder", False)
         self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
+        self.cf_pred_for_sequence_classfication = h_params.get("cf_pred_for_sequence_classfication", False)
         # both:
         self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -105,7 +108,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         self.mask_token_id = tokenizer.mask_token_id
         # generator module
         self.gen_hf = AutoModel.from_pretrained(self.gen_arch)
-        self.gen_emb_layer = self.gen_hf.embeddings if 't5' not in self.gen_arch else self.gen_hf.shared
+        self.gen_emb_layer = self.gen_hf.get_input_embeddings()
         self.gen_encoder = self.gen_hf.encoder
         self.gen_decoder = self.gen_hf.decoder if 't5' in self.gen_arch else None
         self.gen_hidden_size = self.gen_hf.config.hidden_size
@@ -141,7 +144,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         else:
             self.pred_hf = self.gen_hf if self.shared_gen_pred else AutoModel.from_pretrained(self.pred_arch, dropout=self.dropout)
             self.pred_hidden_size = self.pred_hf.config.hidden_size
-            self.pred_emb_layer = self.pred_hf.embeddings
+            self.pred_emb_layer = self.pred_hf.get_input_embeddings()
             self.pred_encoder = self.pred_hf.encoder
             self.pred_decoder = self.gen_hf.decoder if 't5' in self.pred_arch else None
             self.pred_scalar_mix = ScalarMixWithDropout(
@@ -179,7 +182,9 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained("t5-base", config=t5_config)
             self.cf_gen_hf.load_state_dict(load_torch_object(self.cf_gen_arch), strict=False)
             # missing key: decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight
-            self.cf_gen_emb_layer = self.cf_gen_hf.shared
+            self.cf_gen_emb_layer = self.cf_gen_hf.get_input_embeddings()
+            if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
+                self.cf_gen_hf.lm_head = deepcopy(self.cf_gen_hf.lm_head)  # detach lm_head from shared weights
             self.cf_gen_lm_head = self.cf_gen_hf.lm_head
             self.cf_gen_encoder = self.cf_gen_hf.encoder
             self.cf_gen_decoder = self.cf_gen_hf.decoder
@@ -187,7 +192,9 @@ class CounterfactualRationalizer(BaseRationalizer):
         elif 't5' in self.cf_gen_arch:
             from transformers import T5ForConditionalGeneration
             self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
-            self.cf_gen_emb_layer = self.cf_gen_hf.shared
+            self.cf_gen_emb_layer = self.cf_gen_hf.get_input_embeddings()
+            if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
+                self.cf_gen_hf.lm_head = deepcopy(self.cf_gen_hf.lm_head)  # detach lm_head from shared weights
             self.cf_gen_lm_head = self.cf_gen_hf.lm_head
             self.cf_gen_encoder = self.cf_gen_hf.encoder
             self.cf_gen_decoder = self.cf_gen_hf.decoder
@@ -196,8 +203,10 @@ class CounterfactualRationalizer(BaseRationalizer):
             from transformers import BertForMaskedLM
             bert_with_mlm_head = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
             self.cf_gen_hf = bert_with_mlm_head.bert
+            if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
+                self.cf_gen_hf.cls = deepcopy(self.cf_gen_hf.cls)  # detach lm_head from shared weights
             self.cf_gen_lm_head = bert_with_mlm_head.cls
-            self.cf_gen_emb_layer = self.cf_gen_hf.embeddings
+            self.cf_gen_emb_layer = self.cf_gen_hf.get_input_embeddings()
             self.cf_gen_encoder = self.cf_gen_hf.encoder
             self.cf_gen_decoder = None
         else:
@@ -224,16 +233,30 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_pred_decoder = None
             self.cf_pred_scalar_mix = None
         else:
-            self.cf_pred_hf = self.cf_gen_hf if self.cf_shared_gen_pred else AutoModel.from_pretrained(self.cf_pred_arch)
-            self.cf_pred_hidden_size = self.cf_pred_hf.config.hidden_size
-            self.cf_pred_emb_layer = self.cf_pred_hf.embeddings if 't5' not in self.cf_pred_arch else self.cf_pred_hf.shared
-            self.cf_pred_encoder = self.cf_pred_hf.encoder
-            self.cf_pred_decoder = self.cf_pred_hf.decoder if 't5' in self.cf_pred_arch else None
-            self.cf_pred_scalar_mix = ScalarMixWithDropout(
-                mixture_size=self.cf_pred_hf.config.num_hidden_layers+1,
-                dropout=self.cf_dropout,
-                do_layer_norm=False,
-            )
+            if self.cf_pred_for_sequence_classfication:
+                if 't5' in self.cf_pred_arch:
+                    self.cf_pred_hf = AutoModelForSeq2SeqLM.from_pretrained(self.cf_pred_arch)
+                else:
+                    self.cf_pred_hf = AutoModelForSequenceClassification.from_pretrained(self.cf_pred_arch)
+                self.cf_pred_hidden_size = self.cf_pred_hf.config.hidden_size
+                self.cf_pred_emb_layer = self.cf_pred_hf.get_input_embeddings()
+                self.cf_pred_encoder = self.cf_pred_hf
+                self.cf_pred_decoder = None
+                self.cf_pred_scalar_mix = None
+            else:
+                if self.cf_shared_gen_pred:
+                    self.cf_pred_hf = self.cf_gen_hf
+                else:
+                    self.cf_pred_hf = AutoModel.from_pretrained(self.cf_pred_arch)
+                self.cf_pred_hidden_size = self.cf_pred_hf.config.hidden_size
+                self.cf_pred_emb_layer = self.cf_pred_hf.get_input_embeddings()
+                self.cf_pred_encoder = self.cf_pred_hf.encoder
+                self.cf_pred_decoder = self.cf_pred_hf.decoder if 't5' in self.cf_pred_arch else None
+                self.cf_pred_scalar_mix = ScalarMixWithDropout(
+                    mixture_size=self.cf_pred_hf.config.num_hidden_layers+1,
+                    dropout=self.cf_dropout,
+                    do_layer_norm=False,
+                )
         # counterfactual predictor output layer
         self.cf_output_layer = nn.Sequential(
             nn.Linear(self.cf_pred_hidden_size, self.cf_pred_hidden_size),
@@ -379,10 +402,13 @@ class CounterfactualRationalizer(BaseRationalizer):
             self.cf_pred_scalar_mix.parameters() if not self.cf_shared_gen_pred and not self.share_predictors and self.cf_pred_scalar_mix is not None else [],
             self.cf_output_layer.parameters() if not self.share_predictors else []
         )
-        grouped_parameters = [
-            {"params": ff_params, 'lr': self.hparams['lr']},
-            {"params": cf_params, 'lr': self.hparams['cf_lr']}
-        ]
+
+        grouped_parameters = []
+        if self.ff_lbda > 0:
+            grouped_parameters += [{"params": ff_params, 'lr': self.hparams['lr']}]
+        if self.cf_lbda > 0:
+            grouped_parameters += [{"params": cf_params, 'lr': self.hparams['cf_lr']}]
+
         optimizer = build_optimizer(grouped_parameters, self.hparams)
         scheduler = build_scheduler(optimizer, self.hparams)
         output = {"optimizer": optimizer}
@@ -439,12 +465,13 @@ class CounterfactualRationalizer(BaseRationalizer):
         # return everything as output (useful for computing the loss)
         return (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
 
-    def get_factual_flow(self, x, mask=None):
+    def get_factual_flow(self, x, mask=None, z=None):
         """
         Compute the factual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
         # create mask for pretrained-LMs
@@ -484,7 +511,8 @@ class CounterfactualRationalizer(BaseRationalizer):
 
         if self.explainer_pre_mlp:
             gen_h = self.explainer_mlp(gen_h)
-        z = self.explainer(gen_h, mask)
+
+        z = self.explainer(gen_h, mask) if z is None else z
         z_mask = (z * mask.float()).unsqueeze(-1)
 
         if self.selection_faithfulness is True:
@@ -640,11 +668,11 @@ class CounterfactualRationalizer(BaseRationalizer):
 
                 # get the logits for x_tilde
                 cf_gen_dec_out = self.cf_gen_decoder(
-                    input_ids=x_tilde,
-                    attention_mask=(x_tilde != cf_constants.PAD_ID).long(),
+                    input_ids=gen_out.sequences,
+                    attention_mask=(gen_out.sequences != cf_constants.PAD_ID).long(),
                     encoder_hidden_states=encoder_hidden_states
                 )
-                logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)
+                logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)[:, :-1]
 
             else:
                 # sample directly from the output layer
@@ -656,7 +684,7 @@ class CounterfactualRationalizer(BaseRationalizer):
                     top_p=self.cf_generate_kwargs.get('top_p', 1.0),
                     min_tokens_to_keep=self.cf_generate_kwargs.get('min_tokens_to_keep', 1.0),
                     num_samples=self.cf_generate_kwargs.get('num_return_sequences', 1),
-                )
+                ).squeeze(-1)
 
                 # get gen_ids only for <mask> positions
                 z_1 = (z_mask > 0).squeeze(-1).long()
@@ -1014,7 +1042,7 @@ class CounterfactualRationalizer(BaseRationalizer):
         y_cf = 1 - y  # todo: write generic function
         cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_cf, z_tilde, mask_tilde, prefix=prefix)
 
-        loss = ff_loss + self.cf_lbda * cf_loss
+        loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
 
         # logger=False because they are going to be logged via loss_stats
         self.log("train_ff_ps", loss_stats["train_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
@@ -1549,7 +1577,15 @@ def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, neg_id=2841, pos_id=14
 
 def sample_from_logits(logits, top_k=0, top_p=1.0, min_tokens_to_keep=1, num_samples=1):
     """
-    Sample from logits.
+    Sample indices from the logits via top-k or nucleus sampling (top_p).
+
+    :param logits: logits, tensor of shape [B, T, vocab_size]
+    :param top_k: sample from the top k most likely tokens (if > 0)
+    :param top_p: sample from the top p most likely tokens (with p = N * top_p)
+    :param min_tokens_to_keep: minimum number of tokens to keep, even if we are sampling fewer than k tokens
+    :param num_samples: number of samples to draw
+    :return:
+        sample: tensor of shape [B, T, num_samples]
     """
     filtered_logits = top_k_top_p_filtering(logits,
                                             top_k=top_k,
