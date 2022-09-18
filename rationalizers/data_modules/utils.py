@@ -122,3 +122,23 @@ def remap_input_to_cf_vocab_brute_force(bert_tokenizer, t5_tokenizer, x, z, mask
     z_new_pt = torch.nn.utils.rnn.pad_sequence(z_new, batch_first=True, padding_value=0)
     mask_new_pt = torch.nn.utils.rnn.pad_sequence(mask_new, batch_first=True, padding_value=0)
     return x_new_pt, z_new_pt, mask_new_pt.bool()
+
+
+def concat_sequences(src_ids, mt_ids):
+    """
+    Concatenates the input sequences.
+    """
+    # Each sequence is tokenized as:
+    # <bos> <token> <token> ... <token> <eos>
+    # So the concatenation will result in:
+    # <bos> <mt> <eos> <bos> <src> <eos> <bos> <ref> <eos> ...
+    # for some model, <bos> and <eos> might be None, so they are not concatenated.
+    input_ids = torch.cat([mt_ids, src_ids], dim=-1)
+    token_type_ids = torch.cat(
+        [
+            torch.zeros_like(mt_ids),
+            torch.ones_like(src_ids)
+        ],
+        dim=-1
+    )
+    return input_ids, token_type_ids
