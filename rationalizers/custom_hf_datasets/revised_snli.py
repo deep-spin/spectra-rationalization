@@ -24,7 +24,7 @@ _URL = "https://www.dropbox.com/s/z8tp69yog7mei4f/snli.tar.gz"
 
 
 class RevisedSNLIDatasetConfig(datasets.BuilderConfig):
-    """BuilderConfig for BeerAdvocateDataset"""
+    """BuilderConfig for RevisedSNLIDataset"""
 
     def __init__(self, side, **kwargs):
         """

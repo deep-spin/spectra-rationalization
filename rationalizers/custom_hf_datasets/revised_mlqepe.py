@@ -16,7 +16,7 @@ _URL = "https://www.dropbox.com/s/nmdi5vgdrwefnmg/mlqe-pe.tar.gz"
 
 
 class MLQEPEDatasetConfig(datasets.BuilderConfig):
-    """BuilderConfig for BeerAdvocateDataset"""
+    """BuilderConfig for RevisedMLQEPEDataset"""
 
     def __init__(self, lp, **kwargs):
         """
