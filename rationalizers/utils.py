@@ -292,6 +292,18 @@ def masked_average(tensor, mask):
     return tensor_mean
 
 
+def get_ext_mask(mask):
+    """
+    Get extended mask for attention.
+
+    :param mask: [B, T]
+    """
+    ext_mask = mask[:, None, None, :]  # add head and seq dimension
+    ext_mask = ext_mask.float()
+    ext_mask = (1.0 - ext_mask) * -10000.0  # will set softmax to zero
+    return ext_mask
+
+
 def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
     def colorize_two_way(tokens, scores, gold_l, pred_l, leng):
         template_pos = '<span style="color: black; background-color: rgba(0, 255, 0, {}); ' \

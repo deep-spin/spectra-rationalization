@@ -64,6 +64,8 @@ class SelfCounterfactualRationalizer(CounterfactualRationalizer):
 
         # differentiable where
         s_bar = e_mask * z_mask + e * (1 - z_mask)
+
+        # pass (1-z)-masked inputs
         if 't5' in self.cf_gen_arch:
             cf_gen_enc_out = self.cf_gen_encoder(inputs_embeds=s_bar, attention_mask=mask)
             h_tilde = cf_gen_enc_out.last_hidden_state

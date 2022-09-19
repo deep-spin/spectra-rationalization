@@ -11,6 +11,7 @@ from rationalizers.lightning_models import available_models
 from rationalizers.utils import (
     setup_wandb_logger,
     save_config_to_csv,
+    load_torch_object
 )
 
 shell_logger = logging.getLogger(__name__)
@@ -21,13 +22,21 @@ def run(args):
 
     tokenizer = None
     if args.tokenizer is not None:
+        shell_logger.info("Loading tokenizer: {}...".format(args.tokenizer))
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
         dict_args['max_length'] = tokenizer.model_max_length
         constants.update_constants(tokenizer)
 
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
-    dm = dm_cls(d_params=dict_args, tokenizer=tokenizer, cf_tokenizer=None)
+    dm = dm_cls(d_params=dict_args, tokenizer=tokenizer)
+    if args.ckpt is not None:
+        # load rationalizer tokenizer and label encoder
+        dm.load_encoders(
+            root_dir=os.path.dirname(args.ckpt),
+            load_tokenizer=args.load_tokenizer and tokenizer is None,
+            load_label_encoder=args.load_label_encoder,
+        )
     dm.prepare_data()
     dm.setup()
 
@@ -87,6 +96,11 @@ def run(args):
         model_cls = available_models[args.model]
         model = model_cls(dm.tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args)
 
+        if args.ckpt is not None:
+            shell_logger.info("Loading rationalizer from {}...".format(args.ckpt))
+            factual_state_dict = load_torch_object(args.ckpt)['state_dict']
+            model.load_state_dict(factual_state_dict, strict=False)
+
         shell_logger.info("Building trainer...")
         trainer = Trainer.from_argparse_args(
             args,
@@ -112,9 +126,8 @@ def run(args):
     shell_logger.info("Saving tokenizer: {}...".format(args.save_tokenizer))
     shell_logger.info("Saving label encoder: {}...".format(args.save_label_encoder))
     dm.save_encoders(
-        checkpoint_callback.dirpath,
+        root_dir=checkpoint_callback.dirpath,
         save_tokenizer=args.save_tokenizer,
-        save_cf_tokenizer=False,
         save_label_encoder=args.save_label_encoder
     )
 
