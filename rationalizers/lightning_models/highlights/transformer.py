@@ -2,22 +2,27 @@ import logging
 import os
 from copy import deepcopy
 from itertools import chain
+from random import shuffle
 
 import numpy as np
 import torch
 import torchmetrics
 import wandb
 from torch import nn
-from transformers import AutoModel, AutoModelForSequenceClassification, top_k_top_p_filtering, AutoModelForSeq2SeqLM
+from transformers import AutoModel
 
-from rationalizers import constants, constants
+from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.explainers import available_explainers
+from rationalizers.lightning_models.cf_utils import prepend_label_for_mice_t5, make_input_for_t5, \
+    get_new_frequencies_of_gen_ids_from_t5, repeat_interleave_and_pad, merge_input_and_gen_ids, sample_from_logits
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
 from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
-from rationalizers.utils import get_z_stats, freeze_module, masked_average, get_rationales, unroll, get_html_rationales, \
+from rationalizers.utils import (
+    get_z_stats, freeze_module, masked_average, get_rationales, unroll, get_html_rationales,
     save_rationales, save_counterfactuals, load_torch_object, is_trainable, get_ext_mask
+)
 
 shell_logger = logging.getLogger(__name__)
 
@@ -992,12 +997,12 @@ class TransformerRationalizer(BaseRationalizer):
         }
 
         # log rationales
-        from random import shuffle
         idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
         if prefix != 'test':
             shuffle(idxs)
             idxs = idxs[:10]
         else:
+            shuffle(idxs)
             idxs = idxs[:100]
         select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
@@ -1169,274 +1174,3 @@ class TransformerRationalizer(BaseRationalizer):
             }
 
         return output
-
-
-def make_input_for_t5(x, e, z, mask, pad_id=0):
-    """
-    Replace masked positions by sentinel tokens
-
-    :param x: input sequence, torch.FloatTensor [B, T]
-    :param e: input embeddings, torch.FloatTensor [B, T, D]
-    :param z: latent selection vector torch.FloarTensor [B, T]
-    :param mask: mask for padding positions, torch.BoolTensor [B, T]
-    :param pad_id: padding id
-    :return: t5_x: new input ids for T5, torch.FloatTensor [B, T'],
-             t5_e: new input embeddings for T5, torch.FloatTensor [B, T', D],
-             t5_z: new latent selection vector, torch.FloatTensor [B, T']
-             t5_mask: new mask for padding positions, torch.BoolTensor [B, T']
-    """
-    bs, seq_len, hdim = e.shape
-
-    # for example:
-    # z = [0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0]
-
-    # leave only the first non-zero element in each contiguous chunk
-    z_first = torch.relu(z - torch.cat((z.new_zeros(bs, 1), z[:, :-1]), dim=-1))
-    # z_first = [0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]
-
-    # create a matrix of indices of shape (bs, seq_len)
-    ar = torch.arange(seq_len, device=z.device).unsqueeze(0).expand(bs, -1).long()
-
-    # select all tokens but the 2nd-n in each chunk
-    z_all_but_succ = (1 - (z > 0).long() * (1 - (z_first > 0).long()))
-
-    # get the ids of these tokens (and set 2nd-n tokens in each chunk to 999999)
-    idxs_all_but_succ = z_all_but_succ * (ar + 1) + (1 - z_all_but_succ) * 999999
-
-    # sort ids so that 999999 are at the end
-    # (there are better ways to do this but sort is not very slow after all)
-    idxs_all_but_succ = torch.sort(idxs_all_but_succ, stable=True, dim=-1).values
-
-    # get the mask pointing to valid tokens
-    z_mask = idxs_all_but_succ < 999999
-
-    # discount 1 to get 0-index ids
-    idxs_all_but_succ = idxs_all_but_succ - 1
-
-    # for using gather, we need to replace these tokens by some valid index
-    # so we use seq_len - 1 here, which will lead to pad tokens anyway
-    idxs_all_but_succ = idxs_all_but_succ.masked_fill(~z_mask, seq_len - 1)
-
-    # the new mask points to non padding tokens + eliminated tokens
-    t5_mask = idxs_all_but_succ < mask.sum(-1).unsqueeze(-1)
-
-    # gather the new input ids and fix padding positions
-    t5_x = x.gather(1, idxs_all_but_succ)
-    t5_x = t5_x.masked_fill(~t5_mask, pad_id)
-
-    # the new z is simply z_first (the places where sentinels were inserted)
-    # t5_z = z_first * t5_mask.float()
-    t5_z = z_first.gather(1, idxs_all_but_succ)
-    t5_z = t5_z.masked_fill(~t5_mask, 0)
-
-    # expand as `e` so we can gather vectors from it
-    t5_e = e.gather(1, idxs_all_but_succ.unsqueeze(-1).expand(-1, -1, hdim))
-
-    # truncate to new max length
-    max_len = t5_mask.sum(-1).max().item()
-    t5_x = t5_x[:, :max_len]
-    t5_e = t5_e[:, :max_len]
-    t5_z = t5_z[:, :max_len]
-    t5_mask = t5_mask[:, :max_len]
-
-    return t5_x, t5_e, t5_z, t5_mask
-
-
-def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx_a=32000, idx_b=32099):
-    """
-    Get the number of tokens generated by T5 for each position of the input.
-
-    :param x_ids: original input ids, torch.LongTensor of shape [B, T]
-    :param g_ids: generated ids, torch.LongTensor of shape [B, T]
-    :param pad_id: id of padding token
-    :param eos_id: id of end-of-sequence token
-    :param idx_a: id of first token of the new frequency range
-    :param idx_b: id of last token of the new frequency range
-    :return: new_freqs, torch.LongTensor of shape [B, T]
-    """
-    new_freqs = []
-    for i in range(x_ids.shape[0]):
-        # for example:
-        # x = ['▁UN', '▁Chief', '▁says', '▁there', '▁is', '▁no', '▁way', '▁to', '<extra_id_0>', '▁in', '▁Syria', '</s>']
-        # g = ['<extra_id_0>', '▁do', '▁so', '<extra_id_1>', '▁do', '▁so', '.', '</s>', '<pad>', '<pad>']
-
-        # recover z from x_ids
-        z_x = (x_ids[i] >= idx_a) & (x_ids[i] <= idx_b)          # select sentinel tokens
-        z_x = z_x & (x_ids[i] != pad_id) & (x_ids[i] != eos_id)  # but ignore <pad> and </s>
-        # for example:
-        # z_x = tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])
-
-        # recover the complement of z from g_ids
-        z_y = ~((g_ids[i] >= idx_a) & (g_ids[i] <= idx_b))       # select non sentinel tokens
-        z_y = z_y & (g_ids[i] != pad_id) & (g_ids[i] != eos_id)  # but ignore <pad> and </s>
-        # for example:
-        # z_y = tensor([0, 1, 1, 0, 1, 1, 1, 0, 0, 0])
-
-        # count the number of consecutive non-sentinel tokens
-        outputs, counts = torch.unique_consecutive(z_y, return_counts=True)
-        # for example:
-        # outputs = tensor([0, 1, 0, 1, 0])
-        # counts = tensor([1, 2, 1, 3, 3])
-
-        # mask out invalid outputs due to end-of-sequence generation
-        # (times 2 because sentinel tokens are also produced in the output)
-        m = torch.arange(len(outputs), device=z_x.device) < (z_x.sum() * 2)
-        # for example:
-        # m = tensor([1, 1, 0, 0, 0])
-
-        # count only the valid outputs
-        outputs = outputs.masked_fill(~m, 0)
-        counts = counts.masked_fill(~m, 1)
-        # for example:
-        # outputs = tensor([0, 1, 0, 0, 0])
-        # counts = tensor([1, 2, 1, 1, 1])
-
-        # convert counts to repeat_interleave frequencies
-        n_x = 1 - z_x.clone().long()
-        # for example:
-        # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1])
-
-        # trick corner case:
-        # the model generated fewer items than the number of sentinel tokens
-        # in this case, we just count the first generated tokens
-        if (n_x == 0).sum() > outputs.sum():
-            # shell_logger.warning(
-            #     'The number of generated chunks ({}) is less than the number of sentinel tokens ({}). '
-            #     'Selecting only the first generated chunks.'.format(outputs.sum(), (n_x == 0).sum())
-            # )
-            m1 = n_x == 0
-            m2 = m1.cumsum(0) <= outputs.sum()
-            n_x[m1 & m2] = counts[outputs]
-        else:
-            n_x[n_x == 0] = counts[outputs]
-        # n_x = tensor([1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1])
-
-        # now we can repeat according to this new count, so we save them
-        new_freqs.append(n_x)
-    return new_freqs
-
-
-def repeat_interleave_and_pad(x, counts, pad_id=0):
-    """
-    batch-wise repeat_interleave x according to counts,
-    and then pad reminiscent positions with pad_id
-
-    :param x: tensor with shape (batch_size, seq_len)
-    :param counts: list of tensors with shape (seq_len,)
-    :param pad_id: padding value
-    """
-    if counts[0] is None:
-        return x
-    seq_len = x.shape[-1]
-    # if any(len(c) != seq_len for c in counts):
-    #     print(list(map(len, counts)))  # why?
-    x_new = [x[i].repeat_interleave(counts[i][:seq_len], dim=-1) for i in range(len(counts))]
-    x_new = torch.nn.utils.rnn.pad_sequence(x_new, batch_first=True, padding_value=pad_id)
-    return x_new.to(x.device)
-
-
-def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32000, idx_b=32099):
-    """
-    Merge the input ids and generated ids into one tensor.
-
-    :param input_ids_rep: input ids after repeated_interleave, tensor of shape [B, T1]
-    :param generated_ids_rep: generated ids after repeated_interleave, tensor of shape [B, T2]
-    :param pad_id: id of padding token
-    :param idx_a: id of first token of the new frequency range
-    :param idx_b: id of last token of the new frequency range
-    """
-    # recover z from input ids and generated ids
-    mask_inp = ~((input_ids_rep >= idx_a) & (input_ids_rep <= idx_b))
-    mask_gen = ~((generated_ids_rep >= idx_a) & (generated_ids_rep <= idx_b))
-
-    # get the length of the repeated tensors
-    len_inp = input_ids_rep.shape[1]
-    len_gen = generated_ids_rep.shape[1]
-
-    # if we have less tokens in the original input, we truncate the generated ones
-    if len_inp <= len_gen:
-        m = mask_inp[:, :len_inp].long()
-        merged_ids_rep = m * input_ids_rep[:, :len_inp] + (1 - m) * generated_ids_rep[:, :len_inp]
-
-    # otherwise, we truncate the input ones
-    else:
-        m = mask_gen[:, :len_gen].long()
-        merged_ids_rep = m * generated_ids_rep[:, :len_gen] + (1 - m) * input_ids_rep[:, :len_gen]
-
-    # cap the new tensor to the new length since the merged_ids
-    # can have more pad tokens than the necessary
-    new_max_len = (merged_ids_rep != pad_id).sum(1).max().item()
-    merged_ids_rep = merged_ids_rep[:, :new_max_len]
-
-    return merged_ids_rep
-
-
-def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, tokenizer, task='imdb'):
-    """
-    Prepend a label to the generated ids for MICE T5 using the following format:
-
-    `label: <LABEL>. input: <TOKENS>`
-
-    where <LABEL> is either `negative` or `positive` and <TOKENS> is the input tokens.
-
-    :param y_hat: classifier logits, tensor of shape [B, T, 2]
-    :param x_cf: input ids, tensor of shape [B, T]
-    :param z_cf: latent selections, tensor of shape [B, T]
-    :param mask_cf: input mask, tensor of shape [B, T]
-    :param tokenizer: tokenizer instance
-    :param task: task name
-    :return:
-        x_cf: tensors of shape [B, T + 6] with the prepended label template
-        z_cf: tensors of shape [B, T + 6] with prepended `1s`
-        mask_cf: tensors of shape [B, T + 6] with prepended `1s`
-    """
-    if task == 'imdb':
-        neg_id = tokenizer.vocab['▁negative']
-        pos_id = tokenizer.vocab['▁positive']
-        # manually create the ids of the template:
-        # prefix_ids = tokenizer.tokenize('label: positive. input:')
-        # prefix_ids = tokenizer.tokenize('label: negative. input:')
-        prefix_ids = torch.tensor([3783, 10, -1, 5, 3785, 10]).to(x_cf.device)
-        prefix_ids = prefix_ids.unsqueeze(0).expand(x_cf.shape[0], -1)
-        # replace -1 by neg or pos ids according to the factual prediction
-        # but reverse labels to get counterfactuals
-        y_hat_ids = torch.where(y_hat.argmax(-1) == 0, pos_id, neg_id)
-        # merge prefix_ids and y_hat_ids
-        y_hat_ids = y_hat_ids.unsqueeze(-1).repeat(1, prefix_ids.shape[-1])
-        prefix_m = (prefix_ids == -1).long()
-        prefix_ids = prefix_m * y_hat_ids + (1 - prefix_m) * prefix_ids
-        # prepend prefix to the input
-        x_cf = torch.cat((prefix_ids, x_cf), dim=1)
-        # and also deal with z and mask
-        prefix_zeros = torch.zeros_like(prefix_ids)
-        prefix_ones = torch.ones_like(prefix_ids)
-        z_cf = torch.cat((prefix_zeros, z_cf), dim=1)
-        mask_cf = torch.cat((prefix_ones, mask_cf), dim=1)
-
-    else:
-        raise NotImplementedError
-
-    return x_cf, z_cf, mask_cf
-
-
-def sample_from_logits(logits, top_k=0, top_p=1.0, min_tokens_to_keep=1, num_samples=1):
-    """
-    Sample indices from the logits via top-k or nucleus sampling (top_p).
-
-    :param logits: logits, tensor of shape [B, T, vocab_size]
-    :param top_k: sample from the top k most likely tokens (if > 0)
-    :param top_p: sample from the top p most likely tokens (with p = N * top_p)
-    :param min_tokens_to_keep: minimum number of tokens to keep, even if we are sampling fewer than k tokens
-    :param num_samples: number of samples to draw
-    :return:
-        sample: tensor of shape [B, T, num_samples]
-    """
-    filtered_logits = top_k_top_p_filtering(logits,
-                                            top_k=top_k,
-                                            top_p=top_p,
-                                            min_tokens_to_keep=min_tokens_to_keep)
-    filtered_probas = torch.softmax(filtered_logits, dim=-1)
-    filtered_probas = filtered_probas.view(-1, filtered_probas.shape[-1])
-    sample = torch.multinomial(filtered_probas, num_samples=num_samples)
-    sample = sample.view(logits.shape[0], logits.shape[1], num_samples)
-    return sample

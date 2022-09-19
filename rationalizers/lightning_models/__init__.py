@@ -4,6 +4,7 @@ from rationalizers.lightning_models.highlights.hf_counterfactual import Counterf
 from rationalizers.lightning_models.highlights.hf_self_counterfactual import SelfCounterfactualRationalizer
 from rationalizers.lightning_models.highlights.hf_gen import GenHFRationalizer
 from rationalizers.lightning_models.highlights.hf_single import HFRationalizerSingle
+from rationalizers.lightning_models.highlights.transformer import TransformerRationalizer
 from rationalizers.lightning_models.highlights.spectra import SPECTRARationalizer
 from rationalizers.lightning_models.highlights.sparsemax import SparsemaxRationalizer
 from rationalizers.lightning_models.matchings.faithful_sparsemap_matching import (
@@ -32,4 +33,5 @@ available_models = {
     "vanilla": VanillaClassifier,
     "esim": ESIMMatching,
     "hardkuma": HardKumaRationalizer,
+    "transformer": TransformerRationalizer,
 }
