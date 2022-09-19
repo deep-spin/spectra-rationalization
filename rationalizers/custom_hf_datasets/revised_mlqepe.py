@@ -9,7 +9,7 @@ _CITATION = """todo"""
 
 _DESCRIPTION = """\
 This dataset contains src, mt, da & hter scores for 7 language pairs
-(en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en, en-cs, en-ja, km-en, ps-en).
+(en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en).
 """
 
 _URL = "https://www.dropbox.com/s/nmdi5vgdrwefnmg/mlqe-pe.tar.gz"
@@ -21,7 +21,7 @@ class MLQEPEDatasetConfig(datasets.BuilderConfig):
     def __init__(self, lp, **kwargs):
         """
         Args:
-            lp: language pair (e.g., en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en, en-cs, en-ja, km-en, ps-en)
+            lp: language pair (e.g., en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en)
             **kwargs: keyword arguments forwarded to super.
         """
         self.lp = lp
@@ -40,7 +40,7 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
             description="Samples from the MLQEPE dataset with counterfactuals.",
             lp=lp,
         )
-        for lp in ["en-de", "en-zh", "et-en", "ne-en", "ro-en", "ru-en", "si-en", "en-cs", "en-ja", "km-en", "ps-en"]
+        for lp in ["en-de", "en-zh", "et-en", "ne-en", "ro-en", "ru-en", "si-en"]
     ]
 
     def _info(self):

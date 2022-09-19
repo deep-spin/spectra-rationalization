@@ -12,8 +12,8 @@ from rationalizers.data_modules.base import BaseDataModule
 from rationalizers.data_modules.utils import concat_sequences
 
 
-class RevisedMLQEPEDataModule(BaseDataModule):
-    """DataModule for the Revised MLQEPE Dataset."""
+class MLQEPEDataModule(BaseDataModule):
+    """DataModule for the MLQEPE Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         """
@@ -21,12 +21,13 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         """
         super().__init__(d_params)
         # hard-coded stuff
-        self.path = "./rationalizers/custom_hf_datasets/revised_mlqepe.py"
-        self.is_multilabel = True
-        self.nb_classes = 2
+        self.path = "./rationalizers/custom_hf_datasets/mlqepe.py"
+        self.is_multilabel = False
+        self.nb_classes = 1
 
         # hyperparams
         self.lp = d_params.get("lp", "en-de")
+        self.use_hter_as_label = d_params.get("use_hter_as_label", False)
         self.batch_size = d_params.get("batch_size", 32)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
@@ -81,23 +82,23 @@ class RevisedMLQEPEDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
-        cf_input_ids, cf_lengths = pad_and_stack_ids(collated_samples["cf_input_ids"])
         token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"])
-        cf_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf_token_type_ids"])
 
         # stack labels
-        labels = stack_labels(collated_samples["label"])
-        cf_labels = stack_labels(collated_samples["cf_label"])
+        if self.use_hter_as_label:
+            labels = stack_labels(collated_samples["hter"])
+        else:
+            labels = stack_labels(collated_samples["da"])
 
         # keep tokens in raw format
         src_tokens = collated_samples["src"]
         mt_tokens = collated_samples["mt"]
-        cf_src_tokens = collated_samples["cf_src"]
-        cf_mt_tokens = collated_samples["cf_mt"]
+        pe_tokens = collated_samples["pe_tokens"]
 
-        # metadata
-        batch_id = collated_samples["batch_id"]
-        is_original = collated_samples["is_original"]
+        # metadata useful for evaluation
+        src_tags = collated_samples["src_tags"]
+        mt_tags = collated_samples["mt_tags"]
+        src_mt_aligns = collated_samples["src_mt_aligns"]
 
         # return batch to the data loader
         batch = {
@@ -107,14 +108,10 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             "labels": labels,
             "src_tokens": src_tokens,
             "mt_tokens": mt_tokens,
-            "cf_input_ids": cf_input_ids,
-            "cf_token_type_ids": cf_token_type_ids,
-            "cf_lengths": cf_lengths,
-            "cf_labels": cf_labels,
-            "cf_src_tokens": cf_src_tokens,
-            "cf_mt_tokens": cf_mt_tokens,
-            "batch_id": batch_id,
-            "is_original": is_original,
+            "pe_tokens": pe_tokens,
+            "src_tags": src_tags,
+            "mt_tags": mt_tags,
+            "src_mt_aligns": src_mt_aligns,
         }
         return batch
 
@@ -135,12 +132,8 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             tok_samples = chain(
                 self.dataset["train"]["src"],
                 self.dataset["train"]["mt"],
-                self.dataset["train"]["cf_src"],
-                self.dataset["train"]["cf_mt"],
                 self.dataset["validation"]["src"],
                 self.dataset["validation"]["mt"],
-                self.dataset["validation"]["cf_src"],
-                self.dataset["validation"]["cf_mt"],
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
@@ -148,14 +141,9 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         def _encode(example: dict):
             src_ids = self.tokenizer.encode(example["src"].strip())
             mt_ids = self.tokenizer.encode(example["mt"].strip())
-            cf_src_ids = self.tokenizer.encode(example["cf_src"].strip())
-            cf_mt_ids = self.tokenizer.encode(example["cf_mt"].strip())
             input_ids, token_type_ids = concat_sequences(src_ids, mt_ids)
-            cf_input_ids, cf_token_type_ids = concat_sequences(cf_src_ids, cf_mt_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids
-            example["cf_input_ids"] = cf_input_ids
-            example["cf_token_type_ids"] = cf_token_type_ids
             return example
 
         self.dataset = self.dataset.map(_encode)
@@ -164,10 +152,6 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=[
-                "input_ids", "token_type_ids", "label",
-                "cf_input_ids", "cf_token_type_ids", "cf_label",
-                "batch_id", "is_original"
-            ],
+            columns=["input_ids", "token_type_ids", "da", "hter"],
             output_all_columns=True
         )

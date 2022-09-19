@@ -25,6 +25,7 @@ class RevisedSNLIDataModule(BaseDataModule):
         self.nb_classes = 3  # entailment, neutral, contradiction
 
         # hyperparams
+        self.side = d_params.get("side", "premise")
         self.batch_size = d_params.get("batch_size", 64)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
@@ -139,7 +140,8 @@ class RevisedSNLIDataModule(BaseDataModule):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
+            side=self.side,
         )
 
         # build tokenize rand label encoder
