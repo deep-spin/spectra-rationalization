@@ -6,7 +6,10 @@ from rationalizers.data_modules.imdb import ImdbDataModule
 from rationalizers.data_modules.multinli import MultiNLIDataModule
 from rationalizers.data_modules.hotel_location import HotelLocationDataModule
 from rationalizers.data_modules.hans import HANSDataModule
-
+from rationalizers.data_modules.mlqepe import MLQEPEDataModule
+from rationalizers.data_modules.revised_imdb import RevisedIMDBDataModule
+from rationalizers.data_modules.revised_snli import RevisedSNLIDataModule
+from rationalizers.data_modules.revised_mlqepe import RevisedMLQEPEDataModule
 
 available_data_modules = {
     "beer": BeerDataModule,
@@ -17,4 +20,8 @@ available_data_modules = {
     "multi_nli": MultiNLIDataModule,
     "hotel_location": HotelLocationDataModule,
     "hans": HANSDataModule,
+    "mlqepe": MLQEPEDataModule,
+    "revised_imdb": RevisedIMDBDataModule,
+    "revised_snli": RevisedSNLIDataModule,
+    "revised_mlqepe": RevisedMLQEPEDataModule,
 }
