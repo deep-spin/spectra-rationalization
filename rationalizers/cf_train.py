@@ -30,6 +30,13 @@ def run(args):
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
     dm = dm_cls(d_params=dict_args, tokenizer=tokenizer)
+    if args.factual_ckpt is not None:
+        # load rationalizer tokenizer and label encoder
+        dm.load_encoders(
+            root_dir=os.path.dirname(args.factual_ckpt),
+            load_tokenizer=args.load_tokenizer and tokenizer is None,
+            load_label_encoder=args.load_label_encoder,
+        )
     dm.prepare_data()
     dm.setup()
 
@@ -88,6 +95,12 @@ def run(args):
         shell_logger.info("Building model: {}...".format(args.model))
         model_cls = available_models[args.model]
         model = model_cls(dm.tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args)
+
+        if args.factual_ckpt is not None:
+            shell_logger.info("Loading rationalizer from {}...".format(args.factual_ckpt))
+            factual_state_dict = load_torch_object(args.ckpt)['state_dict']
+            model.load_state_dict(factual_state_dict, strict=False)
+
         shell_logger.info("Building trainer...")
         trainer = Trainer.from_argparse_args(
             args,
