@@ -43,7 +43,7 @@ def run(args):
     shell_logger.info("Building board loggers...")
     logger = setup_wandb_logger(args.default_root_dir)
 
-    if "ckpt" in dict_args.keys():
+    if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:
         shell_logger.info("Building model: {}...".format(args.model))
         model_cls = available_models[args.model]
         model = model_cls(dm.tokenizer, dm.nb_classes, dm.is_multilabel, h_params=dict_args)
@@ -106,8 +106,6 @@ def run(args):
             args,
             logger=logger,
             callbacks=callbacks,
-            checkpoint_callback=checkpoint_callback,
-            weights_summary="full",
         )
 
         # log stuff

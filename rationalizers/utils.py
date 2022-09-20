@@ -177,7 +177,7 @@ def get_rationales(
 
     :return: list of lists containing the selected rationales
     """
-    z = z.cuda()
+    z = z.to(input_ids.device)
     selected_ids = (z * input_ids).long()
     if isinstance(tokenizer, StaticTokenizerEncoder):
         selected_rationales = tokenizer.batch_decode(selected_ids, lengths)
@@ -199,7 +199,7 @@ def get_z_stats(z=None, mask=None):
     :param mask: mask in [B, T]
     :return:
     """
-    z = z.cuda()
+    z = z.to(mask.device)
     z = torch.where(mask, z, z.new_full([1], 1e2))
 
     num_0 = (z == 0.0).sum().item()

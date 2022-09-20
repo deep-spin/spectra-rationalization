@@ -166,23 +166,22 @@ class TransformerRationalizer(BaseRationalizer):
             else:
                 self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
             self.cf_gen_emb_layer = self.cf_gen_hf.shared
+            self.cf_gen_encoder = self.cf_gen_hf.encoder
+            self.cf_gen_decoder = self.cf_gen_hf.decoder
             if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
                 self.cf_gen_hf.lm_head = deepcopy(self.cf_gen_hf.lm_head)  # detach lm_head from shared weights
             self.cf_gen_lm_head = self.cf_gen_hf.lm_head
-            self.cf_gen_encoder = self.cf_gen_hf.encoder
-            self.cf_gen_decoder = self.cf_gen_hf.decoder
             self.cf_gen_hidden_size = self.cf_gen_hf.config.hidden_size
         elif 'bert' in self.cf_gen_arch:
             from transformers import BertForMaskedLM
-            bert_with_mlm_head = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
-            self.cf_gen_hf = bert_with_mlm_head.bert
+            self.cf_gen_hf = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
             if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
                 self.cf_gen_hf.cls = deepcopy(self.cf_gen_hf.cls)  # detach lm_head from shared weights
-            self.cf_gen_emb_layer =self.cf_gen_hf.embeddings
-            self.cf_gen_lm_head = bert_with_mlm_head.cls
-            self.cf_gen_encoder = self.cf_gen_hf.encoder
+            self.cf_gen_emb_layer = self.cf_gen_hf.bert.embeddings
+            self.cf_gen_encoder = self.cf_gen_hf.bert.encoder
+            self.cf_gen_lm_head = self.cf_gen_hf.cls
             self.cf_gen_decoder = None
-            self.cf_gen_hidden_size = self.cf_gen_hf.config.hidden_size
+            self.cf_gen_hidden_size = self.cf_gen_hf.bert.config.hidden_size
         else:
             raise NotImplementedError
 
@@ -301,13 +300,13 @@ class TransformerRationalizer(BaseRationalizer):
     def configure_optimizers(self):
         """Configure optimizers and lr schedulers for Trainer."""
         ff_params = chain(
-            self.gen_emb_layer.parameters(),
-            self.gen_encoder.parameters(),
+            self.ff_gen_emb_layer.parameters(),
+            self.ff_gen_encoder.parameters(),
+            self.ff_pred_emb_layer.parameters() if not self.ff_shared_gen_pred else [],
+            self.ff_pred_encoder.parameters() if not self.ff_shared_gen_pred else [],
+            self.ff_output_layer.parameters(),
             self.explainer_mlp.parameters(),
             self.explainer.parameters(),
-            self.pred_emb_layer.parameters() if not self.shared_gen_pred else [],
-            self.pred_encoder.parameters() if not self.shared_gen_pred else [],
-            self.output_layer.parameters()
         )
         cf_params = chain(
             self.cf_gen_emb_layer.parameters() if not self.share_generators else [],
@@ -366,13 +365,19 @@ class TransformerRationalizer(BaseRationalizer):
         """
         Compute the factual flow.
 
-        :param x: input ids tensor. torch.LongTensor of shape [B, T]
+        :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
         # get the embeddings of the generator
-        gen_e = self.ff_gen_emb_layer(x)
+        if x.dim() == 2:
+            # receive input ids
+            gen_e = self.ff_gen_emb_layer(x)
+        else:
+            # receive one-hot vectors
+            inputs_embeds = x @ self.ff_gen_emb_layer.word_embeddings.weight
+            gen_e = self.ff_gen_emb_layer(inputs_embeds=inputs_embeds)
 
         # pass though the generator encoder
         if 't5' in self.ff_gen_arch:
@@ -407,7 +412,13 @@ class TransformerRationalizer(BaseRationalizer):
 
         # decide if we pass embeddings or hidden states to the predictor
         if self.ff_selection_faithfulness is True:
-            pred_e = self.ff_pred_emb_layer(x)
+            if x.dim() == 2:
+                # receive input ids
+                pred_e = self.ff_pred_emb_layer(x)
+            else:
+                # receive one-hot vectors
+                inputs_embeds = x @ self.ff_pred_emb_layer.word_embeddings.weight
+                pred_e = self.ff_pred_emb_layer(inputs_embeds=inputs_embeds)
         else:
             pred_e = gen_h
 
@@ -419,10 +430,10 @@ class TransformerRationalizer(BaseRationalizer):
                 x_mask = torch.clamp(sentinel_ids, min=32000, max=32099)
             else:
                 # create an input with full mask tokens for other archs
-                x_mask = torch.ones_like(x) * self.mask_token_id
+                x_mask = torch.ones(x.shape[:2], device=x.device) * self.mask_token_id
             pred_e_mask = self.ff_pred_emb_layer(x_mask)
         elif self.ff_selection_vector == 'pad':
-            x_mask = torch.ones_like(x) * self.pad_token_id
+            x_mask = torch.ones(x.shape[:2], device=x.device) * self.pad_token_id
             pred_e_mask = self.ff_pred_emb_layer(x_mask)
         else:
             pred_e_mask = torch.zeros_like(pred_e)
@@ -494,7 +505,7 @@ class TransformerRationalizer(BaseRationalizer):
             # get sentinel embeddings
             e_mask = self.cf_gen_emb_layer(sentinel_ids)
         else:
-            e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.cf_mask_token_id)
+            e_mask = self.cf_gen_emb_layer(torch.ones_like(x) * self.mask_token_id)
 
         # create mask for pretrained-LMs
         ext_mask = (1.0 - mask[:, None, None, :].to(self.dtype)) * -10000.0
@@ -938,9 +949,9 @@ class TransformerRationalizer(BaseRationalizer):
             gen_ids = x_tilde
         else:
             z_1 = (z_tilde > 0).long()
-            gen_ids = x_tilde if self.cf_use_reinforce else x_tilde.argmax(dim=-1)
+            gen_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
             gen_ids = z_1 * gen_ids + (1 - z_1) * input_ids
-        cfs = [self.cf_tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
+        cfs = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
         cf_lengths = (gen_ids != constants.PAD_ID).long().sum(-1).tolist()
 
         # output to be stacked across iterations
@@ -1061,18 +1072,18 @@ class TransformerRationalizer(BaseRationalizer):
             cf_preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_cf_predictions"]), dim=-1)
             cf_labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_cf_labels"]), device=cf_preds.device)
             if prefix == "val":
-                ff_accuracy = self.val_accuracy(preds, labels)
-                ff_precision = self.val_precision(preds, labels)
-                ff_recall = self.val_recall(preds, labels)
+                ff_accuracy = self.ff_val_accuracy(preds, labels)
+                ff_precision = self.ff_val_precision(preds, labels)
+                ff_recall = self.ff_val_recall(preds, labels)
                 ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
                 cf_accuracy = self.cf_val_accuracy(cf_preds, cf_labels)
                 cf_precision = self.cf_val_precision(cf_preds, cf_labels)
                 cf_recall = self.cf_val_recall(cf_preds, cf_labels)
                 cf_f1_score = 2 * cf_precision * cf_recall / (cf_precision + cf_recall)
             else:
-                ff_accuracy = self.test_accuracy(preds, labels)
-                ff_precision = self.test_precision(preds, labels)
-                ff_recall = self.test_recall(preds, labels)
+                ff_accuracy = self.ff_test_accuracy(preds, labels)
+                ff_precision = self.ff_test_precision(preds, labels)
+                ff_recall = self.ff_test_recall(preds, labels)
                 ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
                 cf_accuracy = self.cf_test_accuracy(cf_preds, cf_labels)
                 cf_precision = self.cf_test_precision(cf_preds, cf_labels)
@@ -1095,7 +1106,7 @@ class TransformerRationalizer(BaseRationalizer):
 
             self.log(
                 f"{prefix}_ff_accuracy",
-                dict_metrics[f"{prefix}_f1score"],
+                dict_metrics[f"{prefix}_ff_accuracy"],
                 prog_bar=False,
                 logger=True,
                 on_step=False,
@@ -1103,7 +1114,7 @@ class TransformerRationalizer(BaseRationalizer):
             )
             self.log(
                 f"{prefix}_ff_f1score",
-                dict_metrics[f"{prefix}_f1score"],
+                dict_metrics[f"{prefix}_ff_f1score"],
                 prog_bar=False,
                 logger=True,
                 on_step=False,
@@ -1119,7 +1130,7 @@ class TransformerRationalizer(BaseRationalizer):
             )
             self.log(
                 f"{prefix}_cf_f1score",
-                dict_metrics[f"{prefix}_cf_accuracy"],
+                dict_metrics[f"{prefix}_cf_f1score"],
                 prog_bar=False,
                 logger=True,
                 on_step=False,

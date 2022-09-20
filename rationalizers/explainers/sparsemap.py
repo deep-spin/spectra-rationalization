@@ -85,7 +85,7 @@ class SparseMAPExplainer(BaseExplainer):
             z.append(z_probs)
 
         z = torch.stack(z, dim=0).squeeze(-1)  # [B, T]
-        z = z.cuda()
+        z = z.to(mask.device)
         z = torch.where(mask, z, z.new_zeros([1]))
         self.z = z
 
