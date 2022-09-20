@@ -493,6 +493,7 @@ class TransformerRationalizer(BaseRationalizer):
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
 
+        # get <mask> vectors
         if 't5' in self.cf_gen_arch:
             # fix inputs for t5 (replace chunked masked positions by a single sentinel token)
             x, e, z, mask = make_input_for_t5(x, e, z, mask, pad_id=constants.PAD_ID)
@@ -513,7 +514,7 @@ class TransformerRationalizer(BaseRationalizer):
         # get the new mask
         z_mask = (z * mask.float()).unsqueeze(-1)
 
-        # differentiable where
+        # set the input for the counterfactual encoder via a differentiable where
         s_bar = e_mask * z_mask + e * (1 - z_mask)
 
         # pass (1-z)-masked inputs
@@ -527,7 +528,19 @@ class TransformerRationalizer(BaseRationalizer):
         # sample from LM
         x_tilde, logits = self._sample_from_lm(x, h_tilde, z_mask, mask, encoder_outputs=cf_gen_enc_out)
 
-        # expand z to account for the new tokens in case of using t5
+        # expand z to account for the new generated tokens (important for t5)
+        x_tilde, z_tilde, mask_tilde = self._expand_factual_inputs_from_x_tilde(x, z, mask, x_tilde)
+
+        # reuse the factual flow to get a prediction for the counterfactual flow
+        z_tilde, y_tilde_hat = self.get_factual_flow(x_tilde, mask=mask_tilde)
+
+        # save vars
+        self.ff_z = z
+        self.cf_z = z_tilde
+
+        return x_tilde, z_tilde, mask_tilde, y_tilde_hat
+
+    def _expand_factual_inputs_from_x_tilde(self, x, z, mask, x_tilde):
         if 't5' in self.cf_gen_arch:
             # get the counts needed to expand the input_ids into generated_ids
             gen_counts = get_new_frequencies_of_gen_ids_from_t5(
@@ -573,14 +586,7 @@ class TransformerRationalizer(BaseRationalizer):
             z_tilde = z
             mask_tilde = mask
 
-        # reuse the factual flow to get a prediction for the counterfactual flow
-        z_tilde, y_tilde_hat = self.get_factual_flow(x_tilde, mask=mask_tilde)
-
-        # save vars
-        self.ff_z = z
-        self.cf_z = z_tilde
-
-        return x_tilde, z_tilde, mask_tilde, y_tilde_hat
+        return x_tilde, z_tilde, mask_tilde
 
     def _sample_from_lm(self, x, h_tilde, z_mask, mask, encoder_outputs=None):
         if self.cf_use_reinforce:
