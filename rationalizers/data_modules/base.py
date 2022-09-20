@@ -24,13 +24,13 @@ class BaseDataModule(pl.LightningDataModule):
         self.label_encoder = None
         self.tokenizer = tokenizer
 
-    def load_encoders(self, root_dir, load_tokenizer, load_cf_tokenizer, load_label_encoder):
+    def load_encoders(self, root_dir, load_tokenizer, load_label_encoder):
         if load_tokenizer:
             self.tokenizer = load_object(os.path.join(root_dir, "tokenizer.pickle"))
         if load_label_encoder:
             self.label_encoder = load_object(os.path.join(root_dir, "label_encoder.pickle"))
 
-    def save_encoders(self, root_dir, save_tokenizer, save_cf_tokenizer, save_label_encoder):
+    def save_encoders(self, root_dir, save_tokenizer, save_label_encoder):
         if save_tokenizer:
             save_object(self.tokenizer, os.path.join(root_dir, "tokenizer.pickle"))
         if save_label_encoder:

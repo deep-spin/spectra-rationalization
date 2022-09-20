@@ -4,6 +4,7 @@ import os
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from transformers import AutoTokenizer
+import datasets as hf_datasets
 
 from rationalizers import constants
 from rationalizers.data_modules import available_data_modules
@@ -130,6 +131,18 @@ def run(args):
     )
 
     # perform test
-    shell_logger.info("Testing...")
-    # load the best checkpoint automatically
+    hf_datasets.logging.disable_progress_bar()
+    shell_logger.info("Testing on all samples... (is_original: {})".format(dm.is_original))
     trainer.test(datamodule=dm, verbose=True)
+
+    # perform test separatedly in case the model does not have a counterfactual flow
+    if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
+        shell_logger.info("Testing on factuals...")
+        dm.is_original = True
+        dm.setup()
+        trainer.test(datamodule=dm, verbose=True)
+
+        shell_logger.info("Testing on counterfactuals...")
+        dm.is_original = False
+        dm.setup()
+        trainer.test(datamodule=dm, verbose=True)
