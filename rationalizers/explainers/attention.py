@@ -56,7 +56,7 @@ class AttentionExplainer(BaseExplainer):
         self.self_scorer = torch.nn.Linear(enc_size, 1)
         self.temperature = h_params.get('temperature', 1.)
 
-    def forward(self, h, mask=None):
+    def forward(self, h, mask=None, **kwargs):
         # logits = self.self_scorer(h, h)
         logits = self.self_scorer(h).squeeze(-1)
         z = self.activation(logits / self.temperature, dim=-1)

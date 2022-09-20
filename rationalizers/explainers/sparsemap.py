@@ -18,7 +18,7 @@ class SparseMAPExplainer(BaseExplainer):
         self.budget = h_params.get('sparsemap_budget', 0)
         self.temperature = h_params.get('sparsemap_temperature', 0.01)
 
-    def forward(self, h, mask=None):
+    def forward(self, h, mask=None, **kwargs):
         batch_size, target_size, enc_size = h.shape
         lengths = mask.long().sum(1)
 
