@@ -126,7 +126,6 @@ class TransformerRationalizer(BaseRationalizer):
             nn.Sigmoid() if not self.is_multilabel else nn.LogSoftmax(dim=-1),
         )
 
-
         ########################
         # weights details
         ########################
