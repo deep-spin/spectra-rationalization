@@ -29,6 +29,7 @@ class RevisedIMDBDataModule(BaseDataModule):
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
+        self.originals_only = d_params.get("originals_only", False)
 
         # objects
         self.dataset = None
@@ -122,6 +123,9 @@ class RevisedIMDBDataModule(BaseDataModule):
 
         self.dataset = self.dataset.map(_encode)
         self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+
+        if self.originals_only:
+            self.dataset = self.dataset.filter(lambda example: example["is_original"])
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
