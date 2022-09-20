@@ -1,6 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
 import os
+import shutil
+
 import datasets
 import pandas as pd
 
@@ -20,9 +22,9 @@ This dataset contains src, mt, da & hter scores for 11 language pairs
 (en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en, en-cs, en-ja, km-en, ps-en).
 """
 
-_URL_DA = "https://github.com/sheffieldnlp/mlqe-pe/tree/master/data/direct-assessments/"
-_URL_WL = "https://github.com/sheffieldnlp/mlqe-pe/tree/master/data/post-editing/"
-_URL_DA_AND_WL_21 = "https://github.com/sheffieldnlp/mlqe-pe/tree/master/data/test21_goldlabels/"
+_URL_DA = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/direct-assessments/"
+_URL_WL = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/post-editing/"
+# _URL_DA_AND_WL_21 = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/test21_goldlabels/"
 
 
 def save_data(fname, data):
@@ -37,17 +39,24 @@ def read_data(fname):
             yield line.strip()
 
 
-def move_da_to_post_editing_folder(da_dir, wl_dir, lp):
-    for split in ['train', 'dev', 'test']:
-        da_file = os.path.join(da_dir, "direct-assessments/{}/{}-{}/{}.{}.df.short.tsv".format(
-            split, lp, split, split.replace('test', 'test20'), lp.replace('-', '')
+def move_da_to_post_editing_folder(da_dir, wl_dir, lp, split):
+    if split == 'test':
+        da_file = os.path.join(da_dir, "{}/{}.{}.df.short.tsv".format(
+            lp, split.replace('test', 'test20'), lp.replace('-', '')
         ))
-        new_da_file = os.path.join(wl_dir, 'post-editing/{}/{}-{}/{}.da'.format(
-            split, lp, split, split.replace('test', 'test20')
+        new_da_file = os.path.join(wl_dir, '{}-{}/{}.da'.format(
+            lp, split.replace('test', 'test20'), split.replace('test', 'test20')
         ))
-        # some files have " tokens
-        df = pd.read_csv(da_file, delimiter='\t', usecols=[1, 2, 3, 4, 5], quoting=3)
-        save_data(new_da_file, df['mean'].tolist())
+    else:
+        da_file = os.path.join(da_dir, "{}-{}/{}.{}.df.short.tsv".format(
+            lp, split, split.replace('test', 'test20'), lp.replace('-', '')
+        ))
+        new_da_file = os.path.join(wl_dir, '{}-{}/{}.da'.format(
+            lp, split, split.replace('test', 'test20')
+        ))
+    # some files have " tokens
+    df = pd.read_csv(da_file, delimiter='\t', usecols=[1, 2, 3, 4, 5], quoting=3)
+    save_data(new_da_file, df['mean'].tolist())
 
 
 def create_dataset(fname):
@@ -110,7 +119,7 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
     BUILDER_CONFIG_CLASS = MLQEPEDatasetConfig
     BUILDER_CONFIGS = [
         MLQEPEDatasetConfig(
-            name="mlqepe_dataset",
+            name="mlqepe_dataset_"+lp,
             description="Samples from the MLQEPE dataset.",
             lp=lp,
         )
@@ -122,16 +131,16 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
             # This is the description that will appear on the datasets page.
             description=_DESCRIPTION,
             # This defines the different columns of the dataset and their types
-            # src	mt	da	hter	batch_id	gold_label	is_original
             features=datasets.Features(
                 {
                     "src": datasets.Value("string"),
                     "mt": datasets.Value("string"),
+                    "pe": datasets.Value("string"),
+                    "src_tags": datasets.Sequence(datasets.Value("int32")),
+                    "mt_tags": datasets.Sequence(datasets.Value("int32")),
+                    "src_mt_aligns": datasets.Sequence(datasets.Sequence(datasets.Value("int32"))),
                     "da": datasets.Value("float"),
                     "hter": datasets.Value("float"),
-                    "gold_label": datasets.Value("int"),
-                    "batch_id": datasets.Value("int"),
-                    "is_original": datasets.Value("int"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -145,19 +154,22 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
 
     def _split_generators(self, dl_manager):
         """Returns SplitGenerators."""
-        da_dir = dl_manager.download_and_extract(_URL_DA)
-        wl_dir = dl_manager.download_and_extract(_URL_WL)
-        # da_wl_21_dir = dl_manager.download_and_extract(_URL_DA_AND_WL_21)
-        lp = self.config.lp
 
+        lp = self.config.lp
+        splits = ['train', 'dev', 'test']
         if lp in ["en-cs", "en-ja", "km-en", "ps-en"]:
             raise Exception('Zero-shot LPs are not available yet.')
 
-        move_da_to_post_editing_folder(da_dir, wl_dir, lp)
+        da_dirs = dl_manager.download_and_extract([_URL_DA + f'{s}/{lp}-{s}.tar.gz' for s in splits])
+        wl_dirs = dl_manager.download_and_extract([_URL_WL + f'{s}/{lp}-{s}.tar.gz' for s in splits])
+
+        for da_dir, wl_dir, split in zip(da_dirs, wl_dirs, splits):
+            move_da_to_post_editing_folder(da_dir, wl_dir, lp, split)
+
         filepaths = {
-            "train": create_dataset(os.path.join(wl_dir, f'post-editing/train/{lp}-train/train.tsv')),
-            "dev": create_dataset(os.path.join(wl_dir, f'post-editing/dev/{lp}-dev/train.tsv')),
-            "test": create_dataset(os.path.join(wl_dir, f'post-editing/test/{lp}-test/test20.tsv')),
+            "train": create_dataset(os.path.join(wl_dirs[0], f'{lp}-train/train')),
+            "dev": create_dataset(os.path.join(wl_dirs[1], f'{lp}-dev/dev')),
+            "test": create_dataset(os.path.join(wl_dirs[2], f'{lp}-test20/test20')),
         }
 
         return [
@@ -183,9 +195,9 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
                 "src": row['src'],
                 "mt": row['mt'],
                 "pe": row['pe'],
-                "src_tags": row['src_tags'],
-                "mt_tags": row['mt_tags'],
-                "src_mt_aligns": row['src_mt_aligns'],
+                "src_tags": eval(row['src_tags']),
+                "mt_tags": eval(row['mt_tags']),
+                "src_mt_aligns": eval(row['src_mt_aligns']),
                 "da": row['da'],
                 "hter": row['hter'],
             }

@@ -12,7 +12,7 @@ This dataset contains src, mt, da & hter scores for 7 language pairs
 (en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en).
 """
 
-_URL = "https://www.dropbox.com/s/nmdi5vgdrwefnmg/mlqe-pe.tar.gz"
+_URL = "https://www.dropbox.com/s/nmdi5vgdrwefnmg/mlqe-pe.tar.gz?dl=1"
 
 
 class MLQEPEDatasetConfig(datasets.BuilderConfig):
@@ -36,7 +36,7 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
     BUILDER_CONFIG_CLASS = MLQEPEDatasetConfig
     BUILDER_CONFIGS = [
         MLQEPEDatasetConfig(
-            name="revised_mlqepe_dataset",
+            name="revised_mlqepe_dataset_"+lp,
             description="Samples from the MLQEPE dataset with counterfactuals.",
             lp=lp,
         )
@@ -48,16 +48,22 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
             # This is the description that will appear on the datasets page.
             description=_DESCRIPTION,
             # This defines the different columns of the dataset and their types
-            # src	mt	da	hter	batch_id	gold_label	is_original
             features=datasets.Features(
                 {
                     "src": datasets.Value("string"),
                     "mt": datasets.Value("string"),
                     "da": datasets.Value("float"),
                     "hter": datasets.Value("float"),
-                    "gold_label": datasets.Value("int"),
-                    "batch_id": datasets.Value("int"),
-                    "is_original": datasets.Value("int"),
+                    "label": datasets.Value("int32"),
+                    "batch_id": datasets.Value("int32"),
+                    "is_original": datasets.Value("int32"),
+                    "cf_src": datasets.Value("string"),
+                    "cf_mt": datasets.Value("string"),
+                    "cf_da": datasets.Value("float"),
+                    "cf_hter": datasets.Value("float"),
+                    "cf_label": datasets.Value("int32"),
+                    "cf_batch_id": datasets.Value("int32"),
+                    "cf_is_original": datasets.Value("int32"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,

@@ -122,7 +122,7 @@ class MLQEPEDataModule(BaseDataModule):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
             lp=self.lp,
         )
 
