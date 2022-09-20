@@ -11,7 +11,7 @@ from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
 
 
-class RevisedSNLIDataModule(BaseDataModule):
+class CounterfactualRevisedSNLIDataModule(BaseDataModule):
     """DataModule for the Revised SNLI Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
@@ -20,7 +20,7 @@ class RevisedSNLIDataModule(BaseDataModule):
         """
         super().__init__(d_params)
         # hard-coded stuff
-        self.path = "./rationalizers/custom_hf_datasets/revised_snli.py"
+        self.path = "./rationalizers/custom_hf_datasets/revised_snli_cf.py"
         self.is_multilabel = True
         self.nb_classes = 3  # entailment, neutral, contradiction
 
@@ -83,13 +83,23 @@ class RevisedSNLIDataModule(BaseDataModule):
 
         prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
         hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
+        cf1_prem_ids, cf1_prem_lengths = pad_and_stack_ids(collated_samples["cf1_prem_ids"])
+        cf1_hyp_ids, cf1_hyp_lengths = pad_and_stack_ids(collated_samples["cf1_hyp_ids"])
+        cf2_prem_ids, cf2_prem_lengths = pad_and_stack_ids(collated_samples["cf2_prem_ids"])
+        cf2_hyp_ids, cf2_hyp_lengths = pad_and_stack_ids(collated_samples["cf2_hyp_ids"])
 
         # stack labels
         labels = stack_labels(collated_samples["label"])
+        cf1_labels = stack_labels(collated_samples["cf1_label"])
+        cf2_labels = stack_labels(collated_samples["cf2_label"])
 
         # keep tokens in raw format
         prem_tokens = collated_samples["prem"]
         hyp_tokens = collated_samples["hyp"]
+        cf1_prem_tokens = collated_samples["cf1_prem"]
+        cf1_hyp_tokens = collated_samples["cf1_hyp"]
+        cf2_prem_tokens = collated_samples["pcf2_rem"]
+        cf2_hyp_tokens = collated_samples["cf2_hyp"]
 
         # metadata
         batch_id = collated_samples["batch_id"]
@@ -102,8 +112,22 @@ class RevisedSNLIDataModule(BaseDataModule):
             "prem_lengths": prem_lengths,
             "hyp_lengths": hyp_lengths,
             "labels": labels,
+            "cf1_prem_ids": cf1_prem_ids,
+            "cf1_hyp_ids": cf1_hyp_ids,
+            "cf1_prem_lengths": cf1_prem_lengths,
+            "cf1_hyp_lengths": cf1_hyp_lengths,
+            "cf1_labels": cf1_labels,
+            "cf2_prem_ids": cf2_prem_ids,
+            "cf2_hyp_ids": cf2_hyp_ids,
+            "cf2_prem_lengths": cf2_prem_lengths,
+            "cf2_hyp_lengths": cf2_hyp_lengths,
+            "cf2_labels": cf2_labels,
             "prem_tokens": prem_tokens,
             "hyp_tokens": hyp_tokens,
+            "cf1_prem_tokens": cf1_prem_tokens,
+            "cf1_hyp_tokens": cf1_hyp_tokens,
+            "cf2_prem_tokens": cf2_prem_tokens,
+            "cf2_hyp_tokens": cf2_hyp_tokens,
             "batch_id": batch_id,
             "is_original": is_original,
         }
@@ -126,8 +150,16 @@ class RevisedSNLIDataModule(BaseDataModule):
             tok_samples = chain(
                 self.dataset["train"]["prem"],
                 self.dataset["train"]["hyp"],
+                self.dataset["train"]["cf1_prem"],
+                self.dataset["train"]["cf1_hyp"],
+                self.dataset["train"]["cf2_prem"],
+                self.dataset["train"]["cf2_hyp"],
                 self.dataset["validation"]["prem"],
                 self.dataset["validation"]["hyp"],
+                self.dataset["validation"]["cf1_prem"],
+                self.dataset["validation"]["cf1_hyp"],
+                self.dataset["validation"]["cf2_prem"],
+                self.dataset["validation"]["cf2_hyp"],
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
@@ -135,6 +167,10 @@ class RevisedSNLIDataModule(BaseDataModule):
         def _encode(example: dict):
             example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
             example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
+            example["cf1_prem_ids"] = self.tokenizer.encode(example["cf1_prem"].strip())
+            example["cf1_hyp_ids"] = self.tokenizer.encode(example["cf1_hyp"].strip())
+            example["cf2_prem_ids"] = self.tokenizer.encode(example["cf2_prem"].strip())
+            example["cf2_hyp_ids"] = self.tokenizer.encode(example["cf2_hyp"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
@@ -142,7 +178,8 @@ class RevisedSNLIDataModule(BaseDataModule):
             type="torch",
             columns=[
                 "prem_ids", "hyp_ids", "label",
-                "batch_id", "is_original"
+                "cf1_prem_ids", "cf1_hyp_ids", "cf1_label",
+                "cf2_prem_ids", "cf2_hyp_ids", "cf2_label",
             ],
             output_all_columns=True,
         )

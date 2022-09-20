@@ -11,8 +11,8 @@ from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
 
 
-class RevisedSNLIDataModule(BaseDataModule):
-    """DataModule for the Revised SNLI Dataset."""
+class CounterfactualRevisedIMDBDataModule(BaseDataModule):
+    """DataModule for the Revised IMDB Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         """
@@ -20,13 +20,12 @@ class RevisedSNLIDataModule(BaseDataModule):
         """
         super().__init__(d_params)
         # hard-coded stuff
-        self.path = "./rationalizers/custom_hf_datasets/revised_snli.py"
+        self.path = "./rationalizers/custom_hf_datasets/revised_imdb_cf.py"
         self.is_multilabel = True
-        self.nb_classes = 3  # entailment, neutral, contradiction
+        self.nb_classes = 2
 
         # hyperparams
-        self.side = d_params.get("side", "premise")
-        self.batch_size = d_params.get("batch_size", 64)
+        self.batch_size = d_params.get("batch_size", 32)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
@@ -36,8 +35,6 @@ class RevisedSNLIDataModule(BaseDataModule):
         self.label_encoder = None
         self.tokenizer = tokenizer
         self.tokenizer_cls = partial(
-            # WhitespaceEncoder,
-            # TreebankEncoder,
             StaticTokenizerEncoder,
             tokenize=nltk.wordpunct_tokenize,
             min_occurrences=self.vocab_min_occurrences,
@@ -70,26 +67,30 @@ class RevisedSNLIDataModule(BaseDataModule):
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
         # pad and stack input ids
-        def pad_and_stack_ids(x):
-            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
-            if self.max_seq_len != 99999999:
-                x_ids = pad_tensor(x_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-            return x_ids, x_lengths
+        input_ids, lengths = stack_and_pad_tensors(
+            collated_samples["input_ids"], padding_index=constants.PAD_ID
+        )
+        if self.max_seq_len != 99999999:
+            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
 
-        def stack_labels(y):
-            if isinstance(y, list):
-                return torch.stack(y, dim=0)
-            return y
-
-        prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
-        hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
+        cf_input_ids, cf_lengths = stack_and_pad_tensors(
+            collated_samples["cf_input_ids"], padding_index=constants.PAD_ID
+        )
+        if self.max_seq_len != 99999999:
+            cf_input_ids = pad_tensor(cf_input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
 
         # stack labels
-        labels = stack_labels(collated_samples["label"])
+        labels = collated_samples["label"]
+        if isinstance(labels, list):
+            labels = torch.stack(labels, dim=0)
+
+        cf_labels = collated_samples["cf_label"]
+        if isinstance(cf_labels, list):
+            cf_labels = torch.stack(cf_labels, dim=0)
 
         # keep tokens in raw format
-        prem_tokens = collated_samples["prem"]
-        hyp_tokens = collated_samples["hyp"]
+        tokens = collated_samples["tokens"]
+        cf_tokens = collated_samples["cf_tokens"]
 
         # metadata
         batch_id = collated_samples["batch_id"]
@@ -97,13 +98,14 @@ class RevisedSNLIDataModule(BaseDataModule):
 
         # return batch to the data loader
         batch = {
-            "prem_ids": prem_ids,
-            "hyp_ids": hyp_ids,
-            "prem_lengths": prem_lengths,
-            "hyp_lengths": hyp_lengths,
+            "input_ids": input_ids,
+            "lengths": lengths,
             "labels": labels,
-            "prem_tokens": prem_tokens,
-            "hyp_tokens": hyp_tokens,
+            "tokens": tokens,
+            "cf_input_ids": cf_input_ids,
+            "cf_lengths": cf_lengths,
+            "cf_labels": cf_labels,
+            "cf_tokens": cf_tokens,
             "batch_id": batch_id,
             "is_original": is_original,
         }
@@ -117,32 +119,31 @@ class RevisedSNLIDataModule(BaseDataModule):
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
-            side=self.side,
         )
 
-        # build tokenize rand label encoder
+        # build tokenizer
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
             tok_samples = chain(
-                self.dataset["train"]["prem"],
-                self.dataset["train"]["hyp"],
-                self.dataset["validation"]["prem"],
-                self.dataset["validation"]["hyp"],
+                self.dataset["train"]["tokens"],
+                self.dataset["train"]["cf_tokens"],
+                self.dataset["validation"]["tokens"],
+                self.dataset["validation"]["cf_tokens"]
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
         def _encode(example: dict):
-            example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
-            example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
+            example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
+            example["cf_input_ids"] = self.tokenizer.encode(example["cf_tokens"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
+        self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+
+        # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=[
-                "prem_ids", "hyp_ids", "label",
-                "batch_id", "is_original"
-            ],
-            output_all_columns=True,
+            columns=["input_ids", "label", "cf_input_ids", "cf_label", "batch_id", "is_original"],
+            output_all_columns=True
         )

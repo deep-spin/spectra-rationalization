@@ -81,19 +81,14 @@ class RevisedMLQEPEDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
-        cf_input_ids, cf_lengths = pad_and_stack_ids(collated_samples["cf_input_ids"])
         token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"])
-        cf_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf_token_type_ids"])
 
         # stack labels
         labels = stack_labels(collated_samples["label"])
-        cf_labels = stack_labels(collated_samples["cf_label"])
 
         # keep tokens in raw format
         src_tokens = collated_samples["src"]
         mt_tokens = collated_samples["mt"]
-        cf_src_tokens = collated_samples["cf_src"]
-        cf_mt_tokens = collated_samples["cf_mt"]
 
         # metadata
         batch_id = collated_samples["batch_id"]
@@ -107,12 +102,6 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             "labels": labels,
             "src_tokens": src_tokens,
             "mt_tokens": mt_tokens,
-            "cf_input_ids": cf_input_ids,
-            "cf_token_type_ids": cf_token_type_ids,
-            "cf_lengths": cf_lengths,
-            "cf_labels": cf_labels,
-            "cf_src_tokens": cf_src_tokens,
-            "cf_mt_tokens": cf_mt_tokens,
             "batch_id": batch_id,
             "is_original": is_original,
         }
@@ -135,12 +124,8 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             tok_samples = chain(
                 self.dataset["train"]["src"],
                 self.dataset["train"]["mt"],
-                self.dataset["train"]["cf_src"],
-                self.dataset["train"]["cf_mt"],
                 self.dataset["validation"]["src"],
                 self.dataset["validation"]["mt"],
-                self.dataset["validation"]["cf_src"],
-                self.dataset["validation"]["cf_mt"],
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
@@ -148,14 +133,9 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         def _encode(example: dict):
             src_ids = self.tokenizer.encode(example["src"].strip())
             mt_ids = self.tokenizer.encode(example["mt"].strip())
-            cf_src_ids = self.tokenizer.encode(example["cf_src"].strip())
-            cf_mt_ids = self.tokenizer.encode(example["cf_mt"].strip())
             input_ids, token_type_ids = concat_sequences(src_ids, mt_ids)
-            cf_input_ids, cf_token_type_ids = concat_sequences(cf_src_ids, cf_mt_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids
-            example["cf_input_ids"] = cf_input_ids
-            example["cf_token_type_ids"] = cf_token_type_ids
             return example
 
         self.dataset = self.dataset.map(_encode)
@@ -166,7 +146,6 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             type="torch",
             columns=[
                 "input_ids", "token_type_ids", "label",
-                "cf_input_ids", "cf_token_type_ids", "cf_label",
                 "batch_id", "is_original"
             ],
             output_all_columns=True

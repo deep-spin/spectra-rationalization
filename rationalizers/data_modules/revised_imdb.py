@@ -73,24 +73,13 @@ class RevisedIMDBDataModule(BaseDataModule):
         if self.max_seq_len != 99999999:
             input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
 
-        cf_input_ids, cf_lengths = stack_and_pad_tensors(
-            collated_samples["cf_input_ids"], padding_index=constants.PAD_ID
-        )
-        if self.max_seq_len != 99999999:
-            cf_input_ids = pad_tensor(cf_input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-
         # stack labels
         labels = collated_samples["label"]
         if isinstance(labels, list):
             labels = torch.stack(labels, dim=0)
 
-        cf_labels = collated_samples["cf_label"]
-        if isinstance(cf_labels, list):
-            cf_labels = torch.stack(cf_labels, dim=0)
-
         # keep tokens in raw format
         tokens = collated_samples["tokens"]
-        cf_tokens = collated_samples["cf_tokens"]
 
         # metadata
         batch_id = collated_samples["batch_id"]
@@ -102,10 +91,6 @@ class RevisedIMDBDataModule(BaseDataModule):
             "lengths": lengths,
             "labels": labels,
             "tokens": tokens,
-            "cf_input_ids": cf_input_ids,
-            "cf_lengths": cf_lengths,
-            "cf_labels": cf_labels,
-            "cf_tokens": cf_tokens,
             "batch_id": batch_id,
             "is_original": is_original,
         }
@@ -126,16 +111,13 @@ class RevisedIMDBDataModule(BaseDataModule):
             # build tokenizer info (vocab + special tokens) based on train and validation set
             tok_samples = chain(
                 self.dataset["train"]["tokens"],
-                self.dataset["train"]["cf_tokens"],
                 self.dataset["validation"]["tokens"],
-                self.dataset["validation"]["cf_tokens"]
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
         def _encode(example: dict):
             example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
-            example["cf_input_ids"] = self.tokenizer.encode(example["cf_tokens"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
@@ -144,6 +126,9 @@ class RevisedIMDBDataModule(BaseDataModule):
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=["input_ids", "label", "cf_input_ids", "cf_label", "batch_id", "is_original"],
+            columns=[
+                "input_ids", "label",
+                "batch_id", "is_original"
+            ],
             output_all_columns=True
         )

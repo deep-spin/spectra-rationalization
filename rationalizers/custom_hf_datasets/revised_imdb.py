@@ -24,7 +24,10 @@ _URL = "https://www.dropbox.com/s/z1ylce2wpy2gjme/imdb.tar.gz?dl=1"
 
 
 class RevisedIMDBDataset(datasets.GeneratorBasedBuilder):
-    """Movie reviews from the IMDB dataset revised by Kaushik et al. (2020)."""
+    """
+    Movie reviews from the IMDB dataset revised by Kaushik et al. (2020).
+    Treats counterfactuals as additional samples.
+    """
 
     VERSION = datasets.Version("1.0.0")
 
@@ -47,10 +50,6 @@ class RevisedIMDBDataset(datasets.GeneratorBasedBuilder):
                     "label": datasets.ClassLabel(names=["Negative", "Positive"]),
                     "batch_id": datasets.Value("int32"),
                     "is_original": datasets.Value("bool"),
-                    "cf_tokens": datasets.Value("string"),
-                    "cf_label":  datasets.ClassLabel(names=["Negative", "Positive"]),
-                    "cf_batch_id":  datasets.Value("int32"),
-                    "cf_is_original": datasets.Value("bool"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -89,16 +88,10 @@ class RevisedIMDBDataset(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, filepath, split):
         """Yields examples."""
         df = pd.read_csv(filepath, delimiter='\t')
-        for i, (_, g) in enumerate(df.groupby('batch_id')):
+        for i, row in df.iterrows():
             yield i, {
-                # the first input is the original review
-                "tokens": g['text'].iloc[0],
-                "label": g['gold_label'].iloc[0],
-                "batch_id": g['batch_id'].iloc[0],
-                "is_original": g['is_original'].iloc[0] == 1,
-                # the second input is the counterfactual
-                "cf_tokens": g['text'].iloc[1],
-                "cf_label": g['gold_label'].iloc[1],
-                "cf_batch_id": g['batch_id'].iloc[1],
-                "cf_is_original": g['is_original'].iloc[1] == 1,
+                "tokens": row['text'],
+                "label": row['gold_label'],
+                "batch_id": row['batch_id'],
+                "is_original": row['is_original'] == 1,
             }

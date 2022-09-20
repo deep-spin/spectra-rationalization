@@ -29,7 +29,10 @@ class MLQEPEDatasetConfig(datasets.BuilderConfig):
 
 
 class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
-    """Samples from the MLQEPE dataset with counterfactuals."""
+    """
+    Samples from the MLQEPE dataset with counterfactuals.
+    Treats counterfactuals as additional samples.
+    """
 
     VERSION = datasets.Version("1.0.0")
 
@@ -57,13 +60,6 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
                     "label": datasets.Value("int32"),
                     "batch_id": datasets.Value("int32"),
                     "is_original": datasets.Value("int32"),
-                    "cf_src": datasets.Value("string"),
-                    "cf_mt": datasets.Value("string"),
-                    "cf_da": datasets.Value("float"),
-                    "cf_hter": datasets.Value("float"),
-                    "cf_label": datasets.Value("int32"),
-                    "cf_batch_id": datasets.Value("int32"),
-                    "cf_is_original": datasets.Value("int32"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -103,22 +99,13 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, filepath, split):
         """Yields examples."""
         df = pd.read_csv(filepath, delimiter='\t')
-        for i, (_, g) in enumerate(df.groupby('batch_id')):
+        for i, row in df.iterrows():
             yield i, {
-                # the first row is the original sample
-                "src": g['src'].iloc[0],
-                "mt": g['mt'].iloc[0],
-                "da": g['da'].iloc[0],
-                "hter": g['hter'].iloc[0],
-                "label": g['gold_label'].iloc[0],
-                "batch_id": g['batch_id'].iloc[0],
-                "is_original": g['is_original'].iloc[0] == 1,
-                # the second row is the counterfactual
-                "cf_src": g['src'].iloc[1],
-                "cf_mt": g['mt'].iloc[1],
-                "cf_da": g['da'].iloc[1],
-                "cf_hter": g['hter'].iloc[1],
-                "cf_label": g['gold_label'].iloc[1],
-                "cf_batch_id": g['batch_id'].iloc[1],
-                "cf_is_original": g['is_original'].iloc[1] == 1,
+                "src": row['src'],
+                "mt": row['mt'],
+                "da": row['da'],
+                "hter": row['hter'],
+                "label": row['gold_label'],
+                "batch_id": row['batch_id'],
+                "is_original": row['is_original'] == 1,
             }

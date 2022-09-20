@@ -10,6 +10,9 @@ from rationalizers.data_modules.mlqepe import MLQEPEDataModule
 from rationalizers.data_modules.revised_imdb import RevisedIMDBDataModule
 from rationalizers.data_modules.revised_snli import RevisedSNLIDataModule
 from rationalizers.data_modules.revised_mlqepe import RevisedMLQEPEDataModule
+from rationalizers.data_modules.revised_imdb_cf import CounterfactualRevisedIMDBDataModule
+from rationalizers.data_modules.revised_snli_cf import CounterfactualRevisedSNLIDataModule
+from rationalizers.data_modules.revised_mlqepe_cf import CounterfactualRevisedMLQEPEDataModule
 
 available_data_modules = {
     "beer": BeerDataModule,
@@ -24,4 +27,7 @@ available_data_modules = {
     "revised_imdb": RevisedIMDBDataModule,
     "revised_snli": RevisedSNLIDataModule,
     "revised_mlqepe": RevisedMLQEPEDataModule,
+    "revised_imdb_cf": CounterfactualRevisedIMDBDataModule,
+    "revised_snli_cf": CounterfactualRevisedSNLIDataModule,
+    "revised_mlqepe_cf": CounterfactualRevisedMLQEPEDataModule,
 }
