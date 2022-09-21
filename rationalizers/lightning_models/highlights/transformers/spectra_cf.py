@@ -14,9 +14,12 @@ from transformers import AutoModel
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.explainers import available_explainers
-from rationalizers.lightning_models.cf_utils import prepend_label_for_mice_t5, make_input_for_t5, \
-    get_new_frequencies_of_gen_ids_from_t5, repeat_interleave_and_pad, merge_input_and_gen_ids, sample_from_logits
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
+from rationalizers.lightning_models.utils import (
+    prepend_label_for_mice_t5, make_input_for_t5,
+    get_new_frequencies_of_gen_ids_from_t5, repeat_interleave_and_pad,
+    merge_input_and_gen_ids, sample_from_logits
+)
 from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.sentence_encoders import LSTMEncoder, MaskedAverageEncoder
 from rationalizers.utils import (
@@ -27,7 +30,7 @@ from rationalizers.utils import (
 shell_logger = logging.getLogger(__name__)
 
 
-class CounterfactualTransformerRationalizer(BaseRationalizer):
+class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
     def __init__(
         self,
@@ -85,7 +88,6 @@ class CounterfactualTransformerRationalizer(BaseRationalizer):
         self.cf_task_for_mice = h_params.get("cf_task_for_mice", "imdb")
 
         # explainer:
-        self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
         self.temperature = h_params.get("temperature", 1.0)
@@ -112,7 +114,7 @@ class CounterfactualTransformerRationalizer(BaseRationalizer):
         self.ff_gen_hidden_size = self.ff_gen_hf.config.hidden_size
 
         # explainer
-        explainer_cls = available_explainers[self.explainer_fn]
+        explainer_cls = available_explainers['sparsemap']
         self.explainer = explainer_cls(h_params, self.ff_gen_hidden_size)
         self.explainer_mlp = nn.Sequential(
             nn.Linear(self.ff_gen_hidden_size, self.ff_gen_hidden_size),
@@ -682,7 +684,7 @@ class CounterfactualTransformerRationalizer(BaseRationalizer):
         loss_vec = self.ff_criterion(y_hat, y)  # [B] or [B,C]
         # main MSE loss for p(y | x,z)
         if not self.is_multilabel:
-            loss = loss_vec.mean(0)  # [B,C] -> [B]
+            loss = loss_vec.mean(0)  # [B] -> [1]
             stats["mse"] = loss.item()
         else:
             loss = loss_vec.mean()  # [1]

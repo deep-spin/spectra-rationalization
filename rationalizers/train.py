@@ -34,7 +34,7 @@ def run(args):
     dm.setup()
 
     shell_logger.info("Building board loggers...")
-    logger = setup_wandb_logger(args.default_root_dir)
+    logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)
 
     if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:
         shell_logger.info("Building model: {}...".format(args.model))

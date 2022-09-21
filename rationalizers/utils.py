@@ -112,7 +112,7 @@ def load_yaml_config(path: str):
     return cfg
 
 
-def setup_wandb_logger(default_root_dir: str):
+def setup_wandb_logger(default_root_dir: str, project: str = None, entity: str = None):
     """
     Function that sets the WanbLogger to be used.
 
@@ -120,8 +120,8 @@ def setup_wandb_logger(default_root_dir: str):
     """
     id = uuid.uuid4()
     return WandbLogger(
-        project="SPECTRA",
-        entity="deepspin-cf-rationalizers",
+        project="SPECTRA" if project is None else project,
+        entity="deepspin-cf-rationalizers" if entity is None else entity,
         save_dir=default_root_dir,
         # version=str(id.fields[1]),
     )

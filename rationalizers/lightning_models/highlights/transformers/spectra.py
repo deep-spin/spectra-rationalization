@@ -24,7 +24,7 @@ from rationalizers.utils import (
 shell_logger = logging.getLogger(__name__)
 
 
-class TransformerRationalizer(BaseRationalizer):
+class TransformerSPECTRARationalizer(BaseRationalizer):
 
     def __init__(
         self,
@@ -64,7 +64,6 @@ class TransformerRationalizer(BaseRationalizer):
         self.ff_lbda = h_params.get('ff_lbda', 1.0)
 
         # explainer:
-        self.explainer_fn = h_params.get("explainer", True)
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
         self.temperature = h_params.get("temperature", 1.0)
@@ -90,7 +89,7 @@ class TransformerRationalizer(BaseRationalizer):
         self.ff_gen_hidden_size = self.ff_gen_hf.config.hidden_size
 
         # explainer
-        explainer_cls = available_explainers[self.explainer_fn]
+        explainer_cls = available_explainers['sparsemap']
         self.explainer = explainer_cls(h_params, self.ff_gen_hidden_size)
         self.explainer_mlp = nn.Sequential(
             nn.Linear(self.ff_gen_hidden_size, self.ff_gen_hidden_size),
@@ -367,7 +366,7 @@ class TransformerRationalizer(BaseRationalizer):
         loss_vec = self.ff_criterion(y_hat, y)  # [B] or [B,C]
         # main MSE loss for p(y | x,z)
         if not self.is_multilabel:
-            loss = loss_vec.mean(0)  # [B,C] -> [B]
+            loss = loss_vec.mean(0)  # [B] -> [1]
             stats["mse"] = loss.item()
         else:
             loss = loss_vec.mean()  # [1]
