@@ -60,7 +60,7 @@ class AttentionExplainer(BaseExplainer):
         # logits = self.self_scorer(h, h)
         logits = self.self_scorer(h).squeeze(-1)
         if mask is not None:
-            logits = logits.masked_fill(~mask, -1e9)
+            logits = logits.masked_fill(~mask.bool(), -1e9)
         z = self.activation(logits / self.temperature, dim=-1)
         self.z = z
         return z, None

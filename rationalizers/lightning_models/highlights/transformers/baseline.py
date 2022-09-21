@@ -37,6 +37,6 @@ class TransformerBaselineClassifier(TransformerBaseRationalizer):
 
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
         z, _ = self.explainer(gen_h, mask)
-        summary = gen_h @ z
+        summary = masked_average(gen_h, z)
         y_hat = self.ff_output_layer(summary)
         return z, y_hat
