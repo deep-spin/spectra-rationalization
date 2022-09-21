@@ -42,7 +42,7 @@ class LSTMEncoder(nn.Module):
         if lengths is None:
             lengths = mask.long().sum(-1).cpu()
         packed_sequence = pack_padded_sequence(
-            x, lengths, batch_first=True, enforce_sorted=False
+            x, lengths.detach().cpu(), batch_first=True, enforce_sorted=False
         )
         outputs, (hx, cx) = self.lstm(packed_sequence)
         outputs, _ = pad_packed_sequence(outputs, batch_first=True)

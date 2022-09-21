@@ -183,7 +183,10 @@ class BaseRationalizer(pl.LightningModule):
         ids_rationales, rationales = get_rationales(
             self.tokenizer, input_ids, z_1, batch["lengths"]
         )
-        pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        if hasattr(self.tokenizer, 'convert_ids_to_tokens'):
+            pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        else:
+            pieces = [[self.tokenizer.index_to_token[i] for i in idxs] for idxs in input_ids.tolist()]
 
         self.log(
             f"{prefix}_sum_loss",
