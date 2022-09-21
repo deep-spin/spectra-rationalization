@@ -689,13 +689,15 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         """
         stats = {}
         loss_vec = self.ff_criterion(y_hat, y)  # [B] or [B,C]
-        # main MSE loss for p(y | x,z)
-        if not self.is_multilabel:
-            loss = loss_vec.mean(0)  # [B] -> [1]
-            stats["mse"] = loss.item()
+
+        # masked average
+        if loss_vec.dim() == 2:
+            loss = (loss_vec * mask.float()).sum(-1) / mask.sum(-1).float()  # [1]
         else:
-            loss = loss_vec.mean()  # [1]
-            stats["criterion"] = loss.item()  # [1]
+            loss = loss_vec.mean()
+
+        # main loss for p(y | x, z)
+        stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
 
         # latent selection stats
         num_0, num_c, num_1, total = get_z_stats(z, mask)
@@ -729,16 +731,15 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # z = x_tilde
 
         # main MSE loss for p(y | x, z)
-        if not self.is_multilabel:
-            loss_vec = loss_vec.mean(1)  # [B,C] -> [B]
-
-        loss = loss_vec.mean()  # [1]
-        main_loss = loss
-
-        if not self.is_multilabel:
-            stats["cf_mse"] = loss.item()  # [1]
+        # masked average
+        if loss_vec.dim() == 2:
+            loss = (loss_vec * mask_tilde.float()).sum(-1) / mask_tilde.sum(-1).float()  # [1]
         else:
-            stats["cf_criterion"] = loss.item()  # [1]
+            loss = loss_vec.mean()
+
+        # main loss for p(y | x, z)
+        stats["cf_mse" if not self.is_multilabel else "cf_criterion"] = loss.item()
+        main_loss = loss
 
         if self.cf_use_reinforce:
             # for BERT:

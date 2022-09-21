@@ -32,13 +32,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Share factual and counterfactual tokenizers",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed. If not specified, will be read from config file.",
+    )
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
     config_dict = {}
     yaml_config_dict = load_yaml_config(tmp_args.config)
     general_dict = {
-        "seed": yaml_config_dict["seed"],
+        "seed": yaml_config_dict["seed"] if tmp_args.seed is None else tmp_args.seed,
         "default_root_dir": yaml_config_dict["default_root_dir"],
     }
 

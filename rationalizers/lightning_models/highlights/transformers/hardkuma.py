@@ -3,13 +3,13 @@ import logging
 import torch
 
 from rationalizers.explainers import available_explainers
-from rationalizers.lightning_models.highlights.transformers.spectra import TransformerSPECTRARationalizer
+from rationalizers.lightning_models.highlights.transformers.spectra import TransformerBaseRationalizer
 from rationalizers.utils import get_z_stats
 
 shell_logger = logging.getLogger(__name__)
 
 
-class TransformerHardKumaRationalizer(TransformerSPECTRARationalizer):
+class TransformerHardKumaRationalizer(TransformerBaseRationalizer):
 
     def __init__(self, tokenizer: object, nb_classes: int, is_multilabel: bool, h_params: dict):
         super().__init__(tokenizer, nb_classes, is_multilabel, h_params)
@@ -34,7 +34,7 @@ class TransformerHardKumaRationalizer(TransformerSPECTRARationalizer):
         explainer_cls = available_explainers['hardkuma']
         self.explainer = explainer_cls(
             h_params,
-            enc_sice=self.ff_gen_hidden_size,
+            enc_size=self.ff_gen_hidden_size,
         )
 
     def get_factual_loss(self, y_hat, y, z, mask, prefix):
@@ -61,6 +61,9 @@ class TransformerHardKumaRationalizer(TransformerSPECTRARationalizer):
             loss = (loss_vec * mask.float()).sum(-1) / mask.sum(-1).float()  # [1]
         else:
             loss = loss_vec.mean()
+
+        # main loss for p(y | x, z)
+        stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
 
         # L0 regularizer (sparsity constraint)
         # pre-compute for regularizers: pdf(0.)

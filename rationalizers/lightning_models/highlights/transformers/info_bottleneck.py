@@ -3,26 +3,26 @@ import logging
 import torch
 
 from rationalizers.explainers import available_explainers
-from rationalizers.lightning_models.highlights.transformers.spectra import TransformerSPECTRARationalizer
+from rationalizers.lightning_models.highlights.transformers.spectra import TransformerBaseRationalizer
 from rationalizers.utils import get_z_stats
 
 shell_logger = logging.getLogger(__name__)
 
 
-class TransformerInfoBottleneckRationalizer(TransformerSPECTRARationalizer):
+class TransformerInfoBottleneckRationalizer(TransformerBaseRationalizer):
 
     def __init__(self, tokenizer: object, nb_classes: int, is_multilabel: bool, h_params: dict):
         super().__init__(tokenizer, nb_classes, is_multilabel, h_params)
         # explainer
-        self.prior_penalty = h_params.get('prior_penalty', 0.0)
+        self.prior_penalty = h_params.get('prior_penalty', 1.0)
         self.explainer_prior = h_params.get('explainer_prior', 0.5)
         explainer_cls = available_explainers['bernoulli']
         self.explainer = explainer_cls(
             h_params,
-            enc_sice=self.ff_gen_hidden_size,
+            enc_size=self.ff_gen_hidden_size,
             relaxed=True,
         )
-        self.register_buffer("prior", torch.full((1,), self.explainer_prior))
+        self.register_buffer("explainer_prior", torch.full((1,), self.explainer_prior))
 
     def get_factual_loss(self, y_hat, y, z, mask, prefix):
         """
@@ -47,7 +47,7 @@ class TransformerInfoBottleneckRationalizer(TransformerSPECTRARationalizer):
             loss = loss_vec.mean()
 
         # main loss for p(y | x, z)
-        stats["mse" if not self.is_multilabel else "nll"] = loss.item()
+        stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
 
         # compute info bottleneck loss
         q_z = self.ff_z_dist

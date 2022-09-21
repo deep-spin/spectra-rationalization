@@ -3,13 +3,13 @@ import logging
 import torch
 
 from rationalizers.explainers import available_explainers
-from rationalizers.lightning_models.highlights.transformers.spectra import TransformerSPECTRARationalizer
+from rationalizers.lightning_models.highlights.transformers.spectra import TransformerBaseRationalizer
 from rationalizers.utils import get_z_stats
 
 shell_logger = logging.getLogger(__name__)
 
 
-class TransformerBernoulliRationalizer(TransformerSPECTRARationalizer):
+class TransformerBernoulliRationalizer(TransformerBaseRationalizer):
 
     def __init__(self, tokenizer: object, nb_classes: int, is_multilabel: bool, h_params: dict):
         super().__init__(tokenizer, nb_classes, is_multilabel, h_params)
@@ -24,7 +24,7 @@ class TransformerBernoulliRationalizer(TransformerSPECTRARationalizer):
         explainer_cls = available_explainers['bernoulli']
         self.explainer = explainer_cls(
             h_params,
-            enc_sice=self.ff_gen_hidden_size,
+            enc_size=self.ff_gen_hidden_size,
             relaxed=self.explainer_relaxed,
         )
 
@@ -51,12 +51,12 @@ class TransformerBernoulliRationalizer(TransformerSPECTRARationalizer):
             loss = loss_vec.mean()
 
         # main loss for p(y | x, z)
-        stats["mse" if not self.is_multilabel else "nll"] = loss.item()
+        stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
 
         # get P(z = 0 | x) and P(z = 1 | x)
         m = self.explainer.z_dists[0]
-        logp_z0 = m.log_prob(0.0).squeeze(2)  # [B, T]
-        logp_z1 = m.log_prob(1.0).squeeze(2)  # [B, T]
+        logp_z0 = m.log_prob(z.new_zeros(1)).squeeze(2)  # [B, T]
+        logp_z1 = m.log_prob(z.new_ones(1)).squeeze(2)  # [B, T]
 
         # compute log p(z|x) for each case (z==0 and z==1) and mask
         logpz = torch.where(z == 0, logp_z0, logp_z1)
