@@ -1,19 +1,14 @@
 import logging
-import numpy as np
-import pytorch_lightning as pl
+
 import torch
+import torchmetrics
 from torch import nn
 from torchnlp.encoders.text import StaticTokenizerEncoder
-import ipdb
 
 from rationalizers import constants
 from rationalizers.builders import build_embedding_weights
 from rationalizers.lightning_models.highlights.base import BaseRationalizer
-from rationalizers.modules.generators import BernoulliIndependentGenerator
-from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.modules.predictors import SentimentPredictor
-from rationalizers.utils import get_z_stats
-
 
 shell_logger = logging.getLogger(__name__)
 
@@ -70,30 +65,30 @@ class VanillaClassifier(BaseRationalizer):
         self.save_hyperparameters(h_params)
 
         # define metrics
-        self.train_accuracy = pl.metrics.Accuracy()
-        self.val_accuracy = pl.metrics.Accuracy()
-        self.test_accuracy = pl.metrics.Accuracy()
-        self.train_precision = pl.metrics.Precision(
+        self.train_accuracy = torchmetrics.Accuracy()
+        self.val_accuracy = torchmetrics.Accuracy()
+        self.test_accuracy = torchmetrics.Accuracy()
+        self.train_precision = torchmetrics.Precision(
             num_classes=nb_classes,
             average="macro",
         )
-        self.val_precision = pl.metrics.Precision(
+        self.val_precision = torchmetrics.Precision(
             num_classes=nb_classes,
             average="macro",
         )
-        self.test_precision = pl.metrics.Precision(
+        self.test_precision = torchmetrics.Precision(
             num_classes=nb_classes,
             average="macro",
         )
-        self.train_recall = pl.metrics.Recall(
+        self.train_recall = torchmetrics.Recall(
             num_classes=nb_classes,
             average="macro",
         )
-        self.val_recall = pl.metrics.Recall(
+        self.val_recall = torchmetrics.Recall(
             num_classes=nb_classes,
             average="macro",
         )
-        self.test_recall = pl.metrics.Recall(
+        self.test_recall = torchmetrics.Recall(
             num_classes=nb_classes,
             average="macro",
         )

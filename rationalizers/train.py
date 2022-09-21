@@ -30,8 +30,11 @@ def run(args):
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
     dm = dm_cls(d_params=dict_args, tokenizer=tokenizer)
-    dm.prepare_data()
-    dm.setup()
+
+    # if the tokenizer is not loaded, we need to setup the data module
+    if dm.tokenizer is None:
+        dm.prepare_data()
+        dm.setup()
 
     shell_logger.info("Building board loggers...")
     logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)

@@ -7,7 +7,6 @@ import pytorch_lightning as pl
 import torch
 import wandb
 from torch.nn.init import _calculate_fan_in_and_fan_out
-from torchnlp.encoders.text import StaticTokenizerEncoder
 from torch import nn
 import torchmetrics
 

@@ -39,6 +39,11 @@ def run(args):
             load_label_encoder=args.load_label_encoder,
         )
 
+    # if the tokenizer is not loaded, we need to setup the data module
+    if dm.tokenizer is None:
+        dm.prepare_data()
+        dm.setup()
+
     shell_logger.info("Building board loggers...")
     logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)
 
