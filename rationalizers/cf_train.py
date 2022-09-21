@@ -132,8 +132,6 @@ def run(args):
 
     # perform test
     hf_datasets.logging.disable_progress_bar()
-    shell_logger.info("Testing on all samples... (is_original: {})".format(dm.is_original))
-    trainer.test(datamodule=dm, verbose=True)
 
     # perform test separatedly in case the model does not have a counterfactual flow
     if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
@@ -146,3 +144,9 @@ def run(args):
         dm.is_original = False
         dm.setup()
         trainer.test(datamodule=dm, verbose=True)
+
+    # perform test on both factuals and counterfactuals
+    shell_logger.info("Testing on all samples... (is_original: {})".format(dm.is_original))
+    dm.is_original = None
+    dm.setup()
+    trainer.test(datamodule=dm, verbose=True)
