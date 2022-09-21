@@ -99,7 +99,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # useful vars
         ########################
         self.ff_z = None
+        self.ff_z_dist = None
         self.cf_z = None
+        self.cf_z_dist = None
         self.mask_token_id = tokenizer.mask_token_id
         self.pad_token_id = tokenizer.pad_token_id
 
@@ -364,13 +366,14 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # return everything as output (useful for computing the loss)
         return (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
 
-    def get_factual_flow(self, x, mask=None, z=None):
+    def get_factual_flow(self, x, mask=None, z=None, from_cf=False):
         """
         Compute the factual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
+        :param from_cf: bool, whether the input is from the counterfactual flow (default False)
         :return: z, y_hat
         """
         # get the embeddings of the generator
@@ -410,8 +413,16 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        z = self.explainer(gen_h, mask) if z is None else z
+        z, z_dist = self.explainer(gen_h, mask) if z is None else z
         z_mask = (z * mask.float()).unsqueeze(-1)
+
+        # save vars
+        if from_cf:
+            self.cf_z = z
+            self.cf_z_dist = z_dist
+        else:
+            self.ff_z = z
+            self.ff_z_dist = z_dist
 
         # decide if we pass embeddings or hidden states to the predictor
         if self.ff_selection_faithfulness is True:
@@ -535,11 +546,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         x_tilde, z_tilde, mask_tilde = self._expand_factual_inputs_from_x_tilde(x, z, mask, x_tilde)
 
         # reuse the factual flow to get a prediction for the counterfactual flow
-        z_tilde, y_tilde_hat = self.get_factual_flow(x_tilde, mask=mask_tilde)
-
-        # save vars
-        self.ff_z = z
-        self.cf_z = z_tilde
+        z_tilde, y_tilde_hat = self.get_factual_flow(x_tilde, mask=mask_tilde, from_cf=True)
 
         return x_tilde, z_tilde, mask_tilde, y_tilde_hat
 

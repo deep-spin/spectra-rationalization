@@ -89,4 +89,4 @@ class SparseMAPExplainer(BaseExplainer):
         z = torch.where(mask, z, z.new_zeros([1]))
         self.z = z
 
-        return z
+        return z, None

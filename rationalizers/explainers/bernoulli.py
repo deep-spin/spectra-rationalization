@@ -106,4 +106,4 @@ class BernoulliExplainer(BaseExplainer):
         self.z = z
         self.z_dists = [z_dist]
 
-        return z
+        return z, z_dist

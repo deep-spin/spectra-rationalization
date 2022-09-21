@@ -75,6 +75,7 @@ class TransformerSPECTRARationalizer(BaseRationalizer):
         # useful vars
         ########################
         self.ff_z = None
+        self.ff_z_dist = None
         self.mask_token_id = tokenizer.mask_token_id
         self.pad_token_id = tokenizer.pad_token_id
 
@@ -280,8 +281,10 @@ class TransformerSPECTRARationalizer(BaseRationalizer):
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        z = self.explainer(gen_h, mask) if z is None else z
+        z, z_dist = self.explainer(gen_h, mask) if z is None else z
         z_mask = (z * mask.float()).unsqueeze(-1)
+        self.ff_z = z
+        self.ff_z_dist = z_dist
 
         # decide if we pass embeddings or hidden states to the predictor
         if self.ff_selection_faithfulness is True:

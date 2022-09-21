@@ -6,7 +6,7 @@ from rationalizers.explainers.base import BaseExplainer
 
 class HardKumaExplainer(BaseExplainer):
     def __init__(
-        self, h_params: dict, 
+        self, h_params: dict,
         enc_size,
         budget: int = 10,
         contiguous: bool = False,
@@ -95,4 +95,4 @@ class HardKumaExplainer(BaseExplainer):
         self.z = z  # [B, T]
         self.z_dists = [z_dist]
 
-        return z
+        return z, z_dist

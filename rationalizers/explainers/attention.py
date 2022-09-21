@@ -62,4 +62,4 @@ class AttentionExplainer(BaseExplainer):
         z = self.activation(logits / self.temperature, dim=-1)
         z = torch.where(mask, z, z.new_zeros([1]))
         self.z = z
-        return z
+        return z, None
