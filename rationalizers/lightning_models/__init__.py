@@ -9,6 +9,7 @@ from rationalizers.lightning_models.highlights.transformers.spectra import Trans
 from rationalizers.lightning_models.highlights.transformers.spectra_cf import CounterfactualTransformerSPECTRARationalizer
 from rationalizers.lightning_models.highlights.transformers.bernoulli import TransformerBernoulliRationalizer
 from rationalizers.lightning_models.highlights.transformers.hardkuma import TransformerHardKumaRationalizer
+from rationalizers.lightning_models.highlights.transformers.baseline import TransformerBaselineClassifier
 from rationalizers.lightning_models.matchings.faithful_sparsemap_matching import SparseMAPFaithfulMatching
 from rationalizers.lightning_models.matchings.gumbel_matching import GumbelMatching
 from rationalizers.lightning_models.matchings.esim_matching import ESIMMatching
@@ -28,4 +29,5 @@ available_models = {
     "transformer_bernoulli": TransformerBernoulliRationalizer,
     "transformer_hardkuma": TransformerHardKumaRationalizer,
     "transformer_info_bottleneck": TransformerInfoBottleneckRationalizer,
+    "transformer_baseline": TransformerBaselineClassifier,
 }

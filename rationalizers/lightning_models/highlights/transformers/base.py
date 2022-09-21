@@ -65,6 +65,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # explainer:
         self.explainer_fn = h_params.get("explainer_fn", "attention")
+        self.explainer_activation = h_params.get("explainer_activation", "sparsemax")
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
         self.temperature = h_params.get("temperature", 1.0)

@@ -51,7 +51,7 @@ class AttentionExplainer(BaseExplainer):
             'entmax': entmax15,
             'softmax': torch.softmax,
         }
-        self.activation = act2fn[h_params['explainer_activation']]
+        self.activation = act2fn[h_params.get('explainer_activation', 'softmax')]
         # self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
         self.self_scorer = torch.nn.Linear(enc_size, 1)
         self.temperature = h_params.get('temperature', 1.)
