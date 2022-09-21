@@ -52,7 +52,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self.ff_gen_arch = h_params.get("gen_arch", "bert-base-multilingual-cased")
         self.ff_gen_emb_requires_grad = h_params.get("gen_emb_requires_grad", False)
         self.ff_gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
-        self.ff_gen_use_decoder = h_params.get("gen_use_encoder", False)
+        self.ff_gen_use_decoder = h_params.get("gen_use_decoder", False)
         self.ff_pred_arch = h_params.get("pred_arch", "bert-base-multilingual-cased")
         self.ff_pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", False)
         self.ff_pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)

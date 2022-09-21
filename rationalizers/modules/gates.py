@@ -39,10 +39,11 @@ class RelaxedBernoulliGate(nn.Module):
     Assigns a 0 or a 1 to each input word.
     """
 
-    def __init__(self, in_features, out_features=1):
+    def __init__(self, in_features, out_features=1, temperature=1.0):
         super(RelaxedBernoulliGate, self).__init__()
 
         self.layer = Sequential(Linear(in_features, out_features))
+        self.temperature = temperature
 
     def forward(self, x, mask):
         """
@@ -54,7 +55,8 @@ class RelaxedBernoulliGate(nn.Module):
         logits = logits.squeeze(-1) * mask
         logits = logits.unsqueeze(-1)
         dist = RelaxedBernoulli(
-            temperature=torch.tensor([0.1], device=logits.device), logits=logits
+            logits=logits,
+            temperature=torch.tensor([self.temperature], device=logits.device),
         )
         return dist
 

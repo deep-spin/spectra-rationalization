@@ -21,8 +21,9 @@ class TransformerInfoBottleneckRationalizer(TransformerBaseRationalizer):
             h_params,
             enc_size=self.ff_gen_hidden_size,
             relaxed=True,
+            temperature=h_params.get('explainer_temperature', 1.0),
         )
-        self.register_buffer("explainer_prior", torch.full((1,), self.explainer_prior))
+        self.register_buffer("explainer_prior_p", torch.full((1,), self.explainer_prior))
 
     def get_factual_loss(self, y_hat, y, z, mask, prefix):
         """
@@ -50,9 +51,10 @@ class TransformerInfoBottleneckRationalizer(TransformerBaseRationalizer):
         stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
 
         # compute info bottleneck loss
-        q_z = self.ff_z_dist
-        p_z = torch.distributions.Bernoulli(probs=self.explainer_prior.expand_as(q_z.probs))
+        q_z = torch.distributions.Bernoulli(logits=self.ff_z_dist.logits)
+        p_z = torch.distributions.Bernoulli(probs=self.explainer_prior_p.expand_as(q_z.probs))
         kl_div = torch.distributions.kl_divergence(q_z, p_z)
+        kl_div = kl_div.squeeze(2)  # [B, T]
         info_loss = (kl_div * mask.float()).sum(-1) / mask.sum(-1).float()
         info_loss = info_loss.mean()
         stats["info_cost"] = info_loss.item()

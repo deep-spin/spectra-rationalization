@@ -15,6 +15,7 @@ class BernoulliExplainer(BaseExplainer):
         contiguous: bool = False,
         relaxed: bool = False,
         topk: bool = False,
+        temperature: float = 1.0,
     ):
         super().__init__()
         self.topk = topk
@@ -22,7 +23,7 @@ class BernoulliExplainer(BaseExplainer):
         self.budget = budget
         self.relaxed = relaxed
         if self.relaxed:
-            self.z_layer = RelaxedBernoulliGate(enc_size)
+            self.z_layer = RelaxedBernoulliGate(enc_size, temperature=temperature)
         else:
             self.z_layer = BernoulliGate(enc_size)
 

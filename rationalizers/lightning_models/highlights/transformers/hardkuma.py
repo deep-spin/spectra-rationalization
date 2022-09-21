@@ -18,11 +18,11 @@ class TransformerHardKumaRationalizer(TransformerBaseRationalizer):
         self.contiguity_penalty = h_params.get('contiguity_penalty', 0.0)
 
         # constrained lagrangian
-        self.lagrange_lr = h_params.get("lagrange_lr", 0.01)
-        self.lambda_init = h_params.get("lambda_init", 1e-4)
-        self.alpha = h_params.get("alpha", 0.99)
-        self.lambda_min = h_params.get("lambda_min", 1e-6)
-        self.lambda_max = h_params.get("lambda_max", 1)
+        self.lagrange_lr = h_params.get("hardkuma_lagrange_lr", 0.01)
+        self.lambda_init = h_params.get("hardkuma_lambda_init", 1e-4)
+        self.alpha = h_params.get("hardkuma_alpha", 0.99)
+        self.lambda_min = h_params.get("hardkuma_lambda_min", 1e-6)
+        self.lambda_max = h_params.get("hardkuma_lambda_max", 1)
 
         # lagrange buffers
         self.register_buffer("lambda0", torch.full((1,), self.lambda_init))
