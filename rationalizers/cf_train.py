@@ -38,8 +38,6 @@ def run(args):
             load_tokenizer=args.load_tokenizer and tokenizer is None,
             load_label_encoder=args.load_label_encoder,
         )
-    dm.prepare_data()
-    dm.setup()
 
     shell_logger.info("Building board loggers...")
     logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)
@@ -137,16 +135,13 @@ def run(args):
     if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
         shell_logger.info("Testing on factuals...")
         dm.is_original = True
-        dm.setup()
         trainer.test(datamodule=dm, verbose=True)
 
         shell_logger.info("Testing on counterfactuals...")
         dm.is_original = False
-        dm.setup()
         trainer.test(datamodule=dm, verbose=True)
 
     # perform test on both factuals and counterfactuals
-    shell_logger.info("Testing on all samples... (is_original: {})".format(dm.is_original))
+    shell_logger.info("Testing on all samples...")
     dm.is_original = None
-    dm.setup()
     trainer.test(datamodule=dm, verbose=True)

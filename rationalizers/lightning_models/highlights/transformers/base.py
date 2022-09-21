@@ -43,6 +43,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # manual update constants
         constants.update_constants(self.tokenizer)
+        self.has_countertfactual_flow = False
 
         ########################
         # hyperparams
