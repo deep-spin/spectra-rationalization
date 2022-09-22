@@ -81,7 +81,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.cf_selection_vector = h_params.get("cf_selection_vector", 'zero')
         self.cf_selection_mask = h_params.get("cf_selection_mask", True)
         self.cf_use_reinforce = h_params.get('cf_use_reinforce', True)
-        self.cf_use_baseline = h_params.get('cf_use_baseline', True)
+        self.cf_use_reinforce_baseline = h_params.get('cf_use_reinforce_baseline', True)
         self.cf_lbda = h_params.get('cf_lbda', 1.0)
         self.cf_generate_kwargs = h_params.get('cf_generate_kwargs', dict())
         self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
@@ -156,8 +156,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # counterfactual flow
         ########################
         # for reinforce
-        self.n_points = 0
-        self.mean_baseline = 0
+        self.rf_n_points = 0
+        self.rf_mean_baseline = 0
         self.cf_x_tilde = None
         self.cf_log_prob_x_tilde = None
 
@@ -799,16 +799,16 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             # compute generator loss
             cost_vec = loss_vec.detach()
             # cost_vec is neg reward
-            cost_logpz = ((cost_vec - self.mean_baseline) * log_xtilde_scalar).mean(0)
+            cost_logpz = ((cost_vec - self.rf_mean_baseline) * log_xtilde_scalar).mean(0)
 
             # MSE with regularizers = neg reward
             obj = cost_vec.mean()
             stats["cf_obj"] = obj.item()
 
             # add baseline
-            if self.cf_use_baseline:
-                self.n_points += 1.0
-                self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
+            if self.cf_use_reinforce_baseline:
+                self.rf_n_points += 1.0
+                self.rf_mean_baseline += (cost_vec.detach().mean() - self.rf_mean_baseline) / self.rf_n_points
 
             # pred diff doesn't do anything if only 1 aspect being trained
             if not self.is_multilabel:

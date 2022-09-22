@@ -14,10 +14,11 @@ class TransformerBernoulliRationalizer(TransformerBaseRationalizer):
     def __init__(self, tokenizer: object, nb_classes: int, is_multilabel: bool, h_params: dict):
         super().__init__(tokenizer, nb_classes, is_multilabel, h_params)
         # for reinforce
-        self.n_points = 0
-        self.mean_baseline = 0
-        self.use_baseline = h_params.get("use_baseline", False)
+        self.rf_n_points = 0
+        self.rf_mean_baseline = 0
+        self.use_reinforce_baseline = h_params.get("use_reinforce_baseline", False)
         self.sparsity_penalty = h_params.get('sparsity_penalty', 0.0)
+        self.controlled_sparsity_penalty = h_params.get('controlled_sparsity_penalty', 0.0)
         self.contiguity_penalty = h_params.get('contiguity_penalty', 0.0)
         # explainer
         self.explainer_relaxed = h_params.get('explainer_relaxed', False)
@@ -64,6 +65,8 @@ class TransformerBernoulliRationalizer(TransformerBaseRationalizer):
 
         # sparsity regularization
         zsum = z.sum(1)
+        if self.controlled_sparsity_penalty > 0:
+            zsum = torch.relu(zsum - self.controlled_sparsity_penalty)
         zsum_cost = self.sparsity_penalty * zsum.mean(0)
         stats["zsum_cost"] = zsum_cost.item()
 
@@ -85,10 +88,10 @@ class TransformerBernoulliRationalizer(TransformerBaseRationalizer):
         else:
             loss_vec = (loss_vec * mask.float()).sum(1) if loss_vec.dim() == 2 else loss_vec
             cost_vec = loss_vec.detach() + zsum * self.sparsity_penalty + zdiff * self.contiguity_penalty
-            if self.use_baseline:
-                cost_logpz = ((cost_vec - self.mean_baseline) * logpz.sum(1)).mean(0)
-                self.n_points += 1.0
-                self.mean_baseline += (cost_vec.detach().mean() - self.mean_baseline) / self.n_points
+            if self.use_reinforce_baseline:
+                cost_logpz = ((cost_vec - self.rf_mean_baseline) * logpz.sum(1)).mean(0)
+                self.rf_n_points += 1.0
+                self.rf_mean_baseline += (cost_vec.detach().mean() - self.rf_mean_baseline) / self.rf_n_points
             else:
                 cost_logpz = (cost_vec * logpz.sum(1)).mean(0)  # cost_vec is neg reward
 
