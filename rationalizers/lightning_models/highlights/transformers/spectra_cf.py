@@ -86,6 +86,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.cf_generate_kwargs = h_params.get('cf_generate_kwargs', dict())
         self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
         self.cf_task_for_mice = h_params.get("cf_task_for_mice", "imdb")
+        self.cf_manual_sample = h_params.get("cf_manual_sample", True)
+        self.cf_supervision = h_params.get("cf_supervision", False)
 
         # explainer:
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -137,7 +139,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             self.ff_pred_hf = None
             self.ff_pred_decoder = None
         else:
-            self.ff_pred_hf = AutoModel.from_pretrained(self.ff_pred_arch, dropout=self.dropout)
+            self.ff_pred_hf = AutoModel.from_pretrained(self.ff_pred_arch)
             self.ff_pred_hidden_size = self.ff_pred_hf.config.hidden_size
             self.ff_pred_emb_layer = self.ff_pred_hf.shared if 't5' in self.ff_pred_arch else self.ff_pred_hf.embeddings
             self.ff_pred_encoder = self.ff_pred_hf.encoder
@@ -504,6 +506,11 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :return: (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
+        if self.cf_manual_sample:
+            # reuse the factual flow to get a prediction for the counterfactual flow
+            z_tilde, y_tilde_hat = self.get_factual_flow(x, mask=mask, from_cf=True)
+            return x, z_tilde, mask, y_tilde_hat
+
         # prepare input for the generator LM
         e = self.cf_gen_emb_layer(x) if self.cf_input_space == 'embedding' else x
 
@@ -741,7 +748,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         stats["cf_mse" if not self.is_multilabel else "cf_criterion"] = loss.item()
         main_loss = loss
 
-        if self.cf_use_reinforce:
+        # recover the probabilities of x_tilde
+        if self.cf_supervision or self.cf_use_reinforce:
             # for BERT:
             # the <mask> is on <mask> table
             # the book   is on the    table
@@ -770,20 +778,15 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 # x:        the           <input_id_0> is on the <input_id_1>
                 # x_tilde: <input_id_0>  long book    <input_id_1> table </s>
                 gen_ids = self.cf_x_tilde  # [B, T]
-
                 # recover log prob of all sampled tokens (including sentinels)
                 logp_xtilde = self.cf_log_prob_x_tilde  # [B, T, |V|]
-
                 # compute sentinel and padding mask
                 gen_mask = ~((gen_ids >= 32000) & (gen_ids <= 32099))  # non-sentinel
                 gen_mask &= (gen_ids != constants.PAD_ID)  # non-padding
-
                 # get probas of x_tilde [B, T]
                 logp_xtilde = logp_xtilde.gather(-1, gen_ids.unsqueeze(-1)).squeeze(-1)
-
                 # weighted average (ignore sentinels and pad)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
-
             else:
                 # x:        the  <mask> is on the <mask>
                 # x_tilde:  the  book   is on the table
@@ -796,6 +799,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 # weighted average (ignore sentinels and pad)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
+        # supervise logp_xtilde
+        if self.cf_supervision:
+            # we need to use T5 here, there is no way to do this with an encoder-only model
+            raise NotImplementedError
+
+        if self.cf_use_reinforce:
             # compute generator loss
             cost_vec = loss_vec.detach()
             # cost_vec is neg reward

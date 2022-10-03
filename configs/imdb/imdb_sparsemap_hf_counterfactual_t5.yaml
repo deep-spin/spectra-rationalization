@@ -31,22 +31,22 @@ train:
     model: 'hf_counterfactual'
 
     # factual flow
-    factual_ckpt: 'experiments/imdb-sparsemap-hf/version3vriso0o/checkpoints/epoch=8.ckpt'
+    factual_ckpt: 'experiments/imdb-sparsemap-hf/version1469cqea/checkpoints/epoch=9.ckpt'
     load_tokenizer: False
     load_label_encoder: True
     tokenizer: 'bert-base-cased'
-    gen_arch: 'bert-base-cased'   # distilbert-base-cased
-    pred_arch: 'bert-base-cased'  # distilbert-base-cased
+    gen_arch: 'bert-base-cased'
+    pred_arch: 'lstm'
     gen_emb_requires_grad: False
-    pred_emb_requires_grad: False
     gen_encoder_requires_grad: False
+    pred_emb_requires_grad: False
     pred_encoder_requires_grad: False
     pred_output_requires_grad: False
     shared_gen_pred: False
     explainer: 'sparsemap'
     explainer_pre_mlp: True
-    explainer_requires_grad: False
-    sparsemap_budget: 20
+    explainer_requires_grad: True
+    sparsemap_budget: 10
     sparsemap_temperature: 0.01
     use_scalar_mix: True
     dropout: 0.1
@@ -60,12 +60,13 @@ train:
     cf_gen_arch: "t5-small"
     cf_pred_arch: "lstm"
     cf_gen_emb_requires_grad: False
-    cf_pred_emb_requires_grad: False
     cf_gen_encoder_requires_grad: False
+    cf_gen_lm_head_requires_grad: True
+    cf_pred_emb_requires_grad: False
     cf_pred_encoder_requires_grad: True
     cf_pred_output_requires_grad: True
     cf_shared_gen_pred: False
-    cf_use_scalar_mix: True
+    cf_use_scalar_mix: False
     cf_dropout: 0.1
     cf_input_space: 'embedding'
     cf_selection_vector: 'zero'
@@ -75,16 +76,21 @@ train:
     cf_use_reinforce: True
     cf_use_baseline: True
     cf_lbda: 1.0
-    # cf_generate_kwargs:
+    cf_generate_kwargs:
+        do_sample: False
+        num_beams: 1
+        num_beam_groups: 1
 
     # both flows
-    share_tokenizers: False  # use the same tokenizer for both flows (avoid double loading)
-    share_preds: False      # share predictor between flows
+    share_tokenizers: False       # use the same tokenizer for both flows (avoid double loading)
+    share_predictors: False      # share predictors between flows
+    share_generators: False      # share generators between flows
     temperature: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
     lr: 0.00001
+    cf_lr: 0.00001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False
@@ -97,9 +103,9 @@ train:
     t0: 1000000.0  # for asgd
 
     # model: lr scheduler
-#    scheduler: 'multistep'
-#    milestones: [25, 50, 75]
-#    lr_decay: 0.97  # a.k.a gamma
+    #scheduler: 'multistep'
+    #milestones: [25, 50, 75]
+    #lr_decay: 0.97  # a.k.a gamma
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags

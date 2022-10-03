@@ -20,7 +20,7 @@ class HardKumaExplainer(BaseExplainer):
         self.budget = budget
         self.z_layer = KumaGate(enc_size)
 
-    def forward(self, h, mask, **kwargs):
+    def forward(self, h, mask=None, **kwargs):
 
         self.z = None  # z samples
         self.z_dists = []  # z distribution(s)

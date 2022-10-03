@@ -1,52 +1,66 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/imdb-sparsemap-hf/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-imdb-sparsemap-transformer/'  # path to save logs and models
 
 
 # training args
 train:
+    # wandb
+    wandb_project: 'cfrat'
+    wandb_entity: 'mtreviso'
 
     # io
-    save_rationales: True       # rationales will be saved in a .csv in the default_root_dir as `rationales-{timestamp}.csv`
+    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_counterfactuals: True  # will be saved in a .txt in the default_root_dir as `{test|val}_counterfactuals.txt`
     save_tokenizer: False       # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
-    save_label_encoder: True    # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
+    save_label_encoder: False   # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'imdb'                       # data module name (see docs for more options)
+    dm: 'revised_imdb'              # data module name (see docs for more options)
     batch_size: 8                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
-    max_seq_len: 512
+    max_seq_len: 512                # pretrained transformer limitation
+    # max_dataset_size: 64          # for quick testing
+    is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
 
     # early stopping
-    monitor: 'val_f1score'     # quantity to be monitored
+    monitor: 'val_ff_accuracy'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    # bert-base-multilingual-cased
+    model: 'transformer_spectra'
+
+    # factual flow
+    # ckpt: null
+    # factual_ckpt: null
+    # load_tokenizer: False
+    # load_label_encoder: True
     tokenizer: 'bert-base-cased'
-    model: 'hf'
-    temperature: 1.0
-    dropout: 0.1
-    gen_arch: 'bert-base-cased'   # distilbert-base-cased
-    pred_arch: 'lstm'  # distilbert-base-cased
-    pred_bidirectional: True
+    gen_arch: 'bert-base-cased'
     gen_emb_requires_grad: False
-    pred_emb_requires_grad: False
     gen_encoder_requires_grad: False
+    gen_use_decoder: False
+    pred_emb_requires_grad: False
+    pred_arch: 'bert-base-cased'
+    pred_bidirectional: False
     pred_encoder_requires_grad: True
+    pred_output_requires_grad: True
     shared_gen_pred: False
     explainer: 'sparsemap'
     explainer_pre_mlp: True
-    sparsemap_budget: 2
+    explainer_requires_grad: True
+    sparsemap_budget: 30
     sparsemap_temperature: 0.01
+    sparsemap_transition: 0.0001
+    dropout: 0.1
     selection_space: 'embedding'
-    use_scalar_mix: True
     selection_vector: 'zero'
     selection_faithfulness: True
     selection_mask: False
+    temperature: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
@@ -63,13 +77,14 @@ train:
     t0: 1000000.0  # for asgd
 
     # model: lr scheduler
-    #    scheduler: 'multistep'
-    #    milestones: [25, 50, 75]
-    #    lr_decay: 0.97  # a.k.a gamma
+    #scheduler: 'multistep'
+    #milestones: [25, 50, 75]
+    #lr_decay: 0.97  # a.k.a gamma
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
-    gpus: 1
+    accelerator: gpu
+    devices: 1
     gradient_clip_val: 5.0
     min_epochs: 3
     max_epochs: 10
@@ -82,6 +97,7 @@ train:
 # the options defined here will overwrite the ones defined in the checkpoint
 predict:
     # ckpt: null               # will be defined via cli --ckpt or will get last checkpoint version if it exists
-    gpus: 1
+    accelerator: gpu
+    devices: 1
     load_tokenizer: True       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
     load_label_encoder: True   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
