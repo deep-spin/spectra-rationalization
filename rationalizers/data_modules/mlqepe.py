@@ -6,6 +6,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -71,8 +72,6 @@ class MLQEPEDataModule(BaseDataModule):
 
         def pad_and_stack_ids(x):
             x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
-            if self.max_seq_len != 99999999:
-                x_ids = pad_tensor(x_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -139,8 +138,20 @@ class MLQEPEDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            src_ids = self.tokenizer.encode(example["src"].strip())
-            mt_ids = self.tokenizer.encode(example["mt"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                src_ids = self.tokenizer(
+                    example["src"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+                mt_ids = self.tokenizer(
+                    example["mt"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                src_ids = self.tokenizer.encode(example["src"].strip())
+                mt_ids = self.tokenizer.encode(example["mt"].strip())
             input_ids, token_type_ids = concat_sequences(src_ids, mt_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids

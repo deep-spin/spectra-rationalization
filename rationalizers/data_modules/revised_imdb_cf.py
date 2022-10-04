@@ -6,6 +6,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -71,15 +72,9 @@ class CounterfactualRevisedIMDBDataModule(BaseDataModule):
         input_ids, lengths = stack_and_pad_tensors(
             collated_samples["input_ids"], padding_index=constants.PAD_ID
         )
-        if self.max_seq_len != 99999999:
-            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-
         cf_input_ids, cf_lengths = stack_and_pad_tensors(
             collated_samples["cf_input_ids"], padding_index=constants.PAD_ID
         )
-        if self.max_seq_len != 99999999:
-            cf_input_ids = pad_tensor(cf_input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-
         # stack labels
         labels = collated_samples["label"]
         if isinstance(labels, list):
@@ -135,8 +130,20 @@ class CounterfactualRevisedIMDBDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
-            example["cf_input_ids"] = self.tokenizer.encode(example["cf_tokens"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["input_ids"] = self.tokenizer(
+                    example["tokens"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+                example["cf_input_ids"] = self.tokenizer(
+                    example["cf_tokens"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
+                example["cf_input_ids"] = self.tokenizer.encode(example["cf_tokens"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)

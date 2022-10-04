@@ -5,6 +5,7 @@ import datasets as hf_datasets
 import torch
 from torchnlp.encoders.text import WhitespaceEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -38,6 +39,7 @@ class BeerDataModule(BaseDataModule):
 
         # objects
         self.dataset = None
+        self.label_encoder = None  # no label encoder for this dataset
         self.tokenizer = tokenizer
         self.tokenizer_cls = partial(
             WhitespaceEncoder,  # Beer dataset was already tokenized by Lei et al.
@@ -55,9 +57,6 @@ class BeerDataModule(BaseDataModule):
             sos_index=constants.SOS_ID,
             append_sos=False,
             append_eos=False,
-        )
-        self.label_encoder = (
-            None  # no need of label encoder -> predefined labels from self.dataset
         )
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
@@ -81,72 +80,87 @@ class BeerDataModule(BaseDataModule):
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
         # pad and stack input ids
-        input_ids, lengths = stack_and_pad_tensors(
-            collated_samples["input_ids"], padding_index=constants.PAD_ID
-        )
-        if self.max_seq_len != 99999999:
-            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
+        def pad_and_stack_ids(x):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+            return x_ids, x_lengths
 
-        # stack scores
-        scores = collated_samples["scores"]
-        if isinstance(scores, list):
-            scores = torch.stack(scores, dim=0)
+        def stack_labels(y):
+            if isinstance(y, list):
+                return torch.stack(y, dim=0)
+            return y
+
+        input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
+        labels = stack_labels(collated_samples["scores"])
 
         # transform vector to label (multilabel to multiclass)
         if self.transform_to_multiclass:
-            scores = scores.argmax(dim=-1)
+            labels = labels.argmax(dim=-1)
 
         # if aspect-only training, get that aspect as a single score (nb_classes will be 1)
         if self.aspect_id > -1:
-            scores = scores[:, self.aspect_id].unsqueeze(1)
+            labels = labels[:, self.aspect_id].unsqueeze(1)
 
         # keep annotations and tokens in raw format
         annotations = collated_samples["annotations"]
         tokens = collated_samples["tokens"]
 
-        # return batch to the data loaders
+        # return batch to the data loader
         batch = {
             "input_ids": input_ids,
             "lengths": lengths,
             "annotations": annotations,
             "tokens": tokens,
-            "labels": scores,
+            "labels": labels,
         }
         return batch
 
     def prepare_data(self):
         # download data, prepare and store it (do not assign to self vars)
-        _ = hf_datasets.load_dataset(
-            path=self.path,
-            aspect_subset=self.aspect_subset,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
-            save_infos=True,
-        )
+        # _ = hf_datasets.load_dataset(
+        #     path=self.path,
+        #     save_infos=True,
+        # )
+        pass
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
             aspect_subset=self.aspect_subset,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
 
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
             tok_samples = chain(
-                self.dataset["train"]["tokens"], self.dataset["validation"]["tokens"]
+                self.dataset["train"]["tokens"],
+                self.dataset["validation"]["tokens"]
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
         def _encode(example: dict):
-            example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["input_ids"] = self.tokenizer(
+                    example["tokens"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
             return example
 
+        # function to filter out examples longer than max_seq_len
+        def _filter(example: dict):
+            return len(example["input_ids"]) <= self.max_seq_len
+
+        # apply encode and filter
         self.dataset = self.dataset.map(_encode)
-        self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+        self.dataset = self.dataset.filter(_filter)
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
-            type="torch", columns=["input_ids", "scores"], output_all_columns=True
+            type="torch",
+            columns=["input_ids", "scores"],
+            output_all_columns=True,
         )

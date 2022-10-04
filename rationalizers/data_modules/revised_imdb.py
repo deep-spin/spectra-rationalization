@@ -6,6 +6,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -71,9 +72,6 @@ class RevisedIMDBDataModule(BaseDataModule):
         input_ids, lengths = stack_and_pad_tensors(
             collated_samples["input_ids"], padding_index=constants.PAD_ID
         )
-        if self.max_seq_len != 99999999:
-            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-
         # stack labels
         labels = collated_samples["label"]
         if isinstance(labels, list):
@@ -118,7 +116,14 @@ class RevisedIMDBDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["input_ids"] = self.tokenizer(
+                    example["tokens"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["input_ids"] = self.tokenizer.encode(example["tokens"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)

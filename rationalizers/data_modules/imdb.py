@@ -5,6 +5,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -51,7 +52,6 @@ class ImdbDataModule(BaseDataModule):
             append_sos=False,
             append_eos=False,
         )
-        self.cf_tokenizer_cls = self.tokenizer_cls
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         """
@@ -69,8 +69,6 @@ class ImdbDataModule(BaseDataModule):
         # pad and stack input ids
         def pad_and_stack_ids(x):
             x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
-            if self.max_seq_len != 99999999:
-                x_ids = pad_tensor(x_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -103,7 +101,10 @@ class ImdbDataModule(BaseDataModule):
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
-        self.dataset = hf_datasets.load_dataset(path=self.path,)
+        self.dataset = hf_datasets.load_dataset(
+            path=self.path,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
+        )
         modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
         self.dataset["train"] = modified_dataset["train"]
         self.dataset["validation"] = modified_dataset["test"]
@@ -120,12 +121,22 @@ class ImdbDataModule(BaseDataModule):
         # build tokenize rand label encoder
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
-            tok_samples = chain(self.dataset["train"]["text"],)
+            tok_samples = chain(
+                self.dataset["train"]["text"],
+                self.dataset["validation"]["text"]
+            )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # function to map strings to ids
         def _encode(example: dict):
-            example["input_ids"] = self.tokenizer.encode(example["text"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["input_ids"] = self.tokenizer(
+                    example["text"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["input_ids"] = self.tokenizer.encode(example["text"].strip())
             return example
 
         # function to filter out examples longer than max_seq_len

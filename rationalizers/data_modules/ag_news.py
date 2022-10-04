@@ -5,6 +5,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -68,16 +69,17 @@ class AgNewsDataModule(BaseDataModule):
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
         # pad and stack input ids
-        input_ids, lengths = stack_and_pad_tensors(
-            collated_samples["input_ids"], padding_index=constants.PAD_ID
-        )
-        if self.max_seq_len != 99999999:
-            input_ids = pad_tensor(input_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
+        def pad_and_stack_ids(x):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+            return x_ids, x_lengths
 
-        # stack labels
-        labels = collated_samples["label"]
-        if isinstance(labels, list):
-            labels = torch.stack(labels, dim=0)
+        def stack_labels(y):
+            if isinstance(y, list):
+                return torch.stack(y, dim=0)
+            return y
+
+        input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
+        labels = stack_labels(collated_samples["label"])
 
         # keep tokens in raw format
         tokens = collated_samples["text"]
@@ -93,26 +95,26 @@ class AgNewsDataModule(BaseDataModule):
 
     def prepare_data(self):
         # download data, prepare and store it (do not assign to self vars)
-        _ = hf_datasets.load_dataset(
-            path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
-            save_infos=True,
-        )
+        # _ = hf_datasets.load_dataset(
+        #     path=self.path,
+        #     save_infos=True,
+        # )
+        pass
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
         self.dataset["train"] = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
             split="train[:85%]",
         )
         self.dataset["validation"] = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
             split="train[-15%:]",
         )
 
@@ -121,16 +123,29 @@ class AgNewsDataModule(BaseDataModule):
             # build tokenizer info (vocab + special tokens) based on train and validation set
             tok_samples = chain(
                 self.dataset["train"]["text"],
+                self.dataset["validation"]["text"]
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
         def _encode(example: dict):
-            example["input_ids"] = self.tokenizer.encode(example["text"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["input_ids"] = self.tokenizer(
+                    example["text"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["input_ids"] = self.tokenizer.encode(example["text"].strip())
             return example
 
+        # function to filter out examples longer than max_seq_len
+        def _filter(example: dict):
+            return len(example["input_ids"]) <= self.max_seq_len
+
+        # apply encode and filter
         self.dataset = self.dataset.map(_encode)
-        self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+        self.dataset = self.dataset.filter(_filter)
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(

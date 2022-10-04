@@ -6,6 +6,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -73,8 +74,6 @@ class RevisedSNLIDataModule(BaseDataModule):
         # pad and stack input ids
         def pad_and_stack_ids(x):
             x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
-            if self.max_seq_len != 99999999:
-                x_ids = pad_tensor(x_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -134,8 +133,20 @@ class RevisedSNLIDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
-            example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["prem_ids"] = self.tokenizer(
+                    example["prem"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+                example["hyp_ids"] = self.tokenizer(
+                    example["hyp"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
+                example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)

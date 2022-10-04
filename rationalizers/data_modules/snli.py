@@ -5,6 +5,7 @@ import nltk
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
+from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
@@ -68,50 +69,45 @@ class SNLIDataModule(BaseDataModule):
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
         # pad and stack input ids
-        x1_ids, x1_lengths = stack_and_pad_tensors(
-            collated_samples["x1_ids"], padding_index=constants.PAD_ID
-        )
-        x2_ids, x2_lengths = stack_and_pad_tensors(
-            collated_samples["x2_ids"], padding_index=constants.PAD_ID
-        )
-        if self.max_seq_len != 99999999:
-            x1_ids = pad_tensor(x1_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
-            x2_ids = pad_tensor(x2_ids.t(), self.max_seq_len, padding_index=constants.PAD_ID).t()
+        def pad_and_stack_ids(x):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+            return x_ids, x_lengths
+
+        def stack_labels(y):
+            if isinstance(y, list):
+                return torch.stack(y, dim=0)
+            return y
+
+        prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
+        hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
 
         # stack labels
-        labels = collated_samples["label"]
-        if isinstance(labels, list):
-            labels = torch.stack(labels, dim=0)
+        labels = stack_labels(collated_samples["label"])
 
         # keep tokens in raw format
-        x1 = collated_samples["premise"]
-        x2 = collated_samples["hypothesis"]
+        prem_tokens = collated_samples["premise"]
+        hyp_tokens = collated_samples["hypothesis"]
 
         # return batch to the data loader
         batch = {
-            "x1_ids": x1_ids,
-            "x2_ids": x2_ids,
-            "x1_lengths": x1_lengths,
-            "x2_lengths": x2_lengths,
-            "x1": x1,
-            "x2": x2,
+            "prem_ids": prem_ids,
+            "hyp_ids": hyp_ids,
+            "prem_lengths": prem_lengths,
+            "hyp_lengths": hyp_lengths,
             "labels": labels,
+            "prem_tokens": prem_tokens,
+            "hyp_tokens": hyp_tokens,
         }
         return batch
 
     def prepare_data(self):
-        # download data, prepare and store it (do not assign to self vars)
-        _ = hf_datasets.load_dataset(
-            path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
-            save_infos=True,
-        )
+        pass
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
 
         # build tokenize rand label encoder
@@ -127,14 +123,26 @@ class SNLIDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            example["x1_ids"] = self.tokenizer.encode(example["premise"].strip())
-            example["x2_ids"] = self.tokenizer.encode(example["hypothesis"].strip())
+            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                example["prem_ids"] = self.tokenizer(
+                    example["premise"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+                example["hyp_ids"] = self.tokenizer(
+                    example["hypothesis"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )["input_ids"]
+            else:
+                example["prem_ids"] = self.tokenizer.encode(example["premise"].strip())
+                example["hyp_ids"] = self.tokenizer.encode(example["hypothesis"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=["x1_ids", "x2_ids", "label"],
+            columns=["prem_ids", "hyp_ids", "label",],
             output_all_columns=True,
         )
