@@ -25,8 +25,6 @@ def run(args):
     if args.tokenizer is not None:
         shell_logger.info("Loading tokenizer: {}...".format(args.tokenizer))
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
-        dict_args['max_length'] = tokenizer.model_max_length
-        constants.update_constants(tokenizer)
 
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]
@@ -38,6 +36,9 @@ def run(args):
             load_tokenizer=args.load_tokenizer and tokenizer is None,
             load_label_encoder=args.load_label_encoder,
         )
+
+    # update constants
+    constants.update_constants(dm.tokenizer)
 
     # if the tokenizer is not loaded, we need to setup the data module
     if dm.tokenizer is None:
@@ -136,7 +137,7 @@ def run(args):
     # perform test
     hf_datasets.logging.disable_progress_bar()
 
-    # perform test separatedly in case the model does not have a counterfactual flow
+    # perform test separately in case the model does not have a counterfactual flow
     if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
         shell_logger.info("Testing on factuals...")
         dm.is_original = True
@@ -150,3 +151,14 @@ def run(args):
     shell_logger.info("Testing on all samples...")
     dm.is_original = None
     trainer.test(datamodule=dm, verbose=True)
+
+    # perform test on the entire original dataset (if provided)
+    if 'original_dataset' in dict_args and dict_args['original_dataset'] is not None:
+        shell_logger.info("Testing on the original dataset {}...".format(args.original_dataset))
+        orig_dm = available_data_modules[args.original_dataset](d_params=args.original_dataset_kwargs)
+        orig_dm.tokenizer = dm.tokenizer
+        orig_dm.label_encoder = dm.label_encoder
+        trainer.test(datamodule=orig_dm, verbose=True)
+
+    # bye bye
+    shell_logger.info("Bye bye!")
