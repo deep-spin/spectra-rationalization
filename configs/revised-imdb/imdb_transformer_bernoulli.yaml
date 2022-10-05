@@ -108,5 +108,5 @@ predict:
     # ckpt: null               # will be defined via cli --ckpt or will get last checkpoint version if it exists
     accelerator: gpu
     devices: 1
-    load_tokenizer: True       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
-    load_label_encoder: True   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+    load_tokenizer: False       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
+    load_label_encoder: False   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`

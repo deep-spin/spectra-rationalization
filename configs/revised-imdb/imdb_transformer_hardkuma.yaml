@@ -62,7 +62,7 @@ train:
     explainer_requires_grad: True
     hardkuma_lagrange_lr: 0.01
     hardkuma_alpha: 0.99
-    hardkuma_lambda_init: 0.001
+    hardkuma_lambda_init: 0.0001
     hardkuma_lambda_min: 0.000001
     hardkuma_lambda_max: 1.0
     sparsity_penalty: 0.1
@@ -76,7 +76,7 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.000001
+    lr: 0.000005
     weight_decay: 0.0000001
     betas: [0.9, 0.999]
     amsgrad: False
@@ -111,5 +111,5 @@ predict:
     # ckpt: null               # will be defined via cli --ckpt or will get last checkpoint version if it exists
     accelerator: gpu
     devices: 1
-    load_tokenizer: True       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
-    load_label_encoder: True   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+    load_tokenizer: False       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
+    load_label_encoder: False   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
