@@ -135,30 +135,44 @@ def run(args):
     )
 
     # perform test
+    shell_logger.info("Starting test...")
     hf_datasets.logging.disable_progress_bar()
 
-    # perform test separately in case the model does not have a counterfactual flow
-    if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
-        shell_logger.info("Testing on factuals...")
-        dm.is_original = True
-        trainer.test(datamodule=dm, verbose=True)
+    def log_final_outputs(final_outputs, flow_name=None, prefix_name=None):
+        for stat_dict in final_outputs:
+            new_stat_dict = {}
+            for stat_name, stat_value in stat_dict.items():
+                if flow_name is not None:
+                    stat_name = stat_name.replace('ff_', flow_name + '_')
+                if prefix_name is not None:
+                    stat_name = stat_name.replace('test_', 'test_' + prefix_name + '_')
+                new_stat_dict[stat_name] = stat_value
+            logger.log_metrics(new_stat_dict)
 
+    if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
+        # perform test separately in case the model does not have a counterfactual flow
         shell_logger.info("Testing on counterfactuals...")
         dm.is_original = False
-        trainer.test(datamodule=dm, verbose=True)
+        outputs = trainer.test(datamodule=dm, verbose=True)
+        log_final_outputs(outputs, flow_name='cf', prefix_name=None)
 
-    # perform test on both factuals and counterfactuals
-    shell_logger.info("Testing on all samples...")
-    dm.is_original = None
-    trainer.test(datamodule=dm, verbose=True)
+        shell_logger.info("Testing on factuals...")
+        dm.is_original = True
+        outputs = trainer.test(datamodule=dm, verbose=True)
+        log_final_outputs(outputs, flow_name='ff', prefix_name=None)
 
-    # perform test on the entire original dataset (if provided)
-    if 'original_dataset' in dict_args and dict_args['original_dataset'] is not None:
-        shell_logger.info("Testing on the original dataset {}...".format(args.original_dataset))
-        orig_dm = available_data_modules[args.original_dataset](d_params=args.original_dataset_kwargs)
-        orig_dm.tokenizer = dm.tokenizer
-        orig_dm.label_encoder = dm.label_encoder
-        trainer.test(datamodule=orig_dm, verbose=True)
+    else:
+        # perform test on both factuals and counterfactuals
+        shell_logger.info("Testing on all samples...")
+        dm.is_original = None
+        outputs = trainer.test(datamodule=dm, verbose=True)
+        log_final_outputs(outputs, flow_name=None, prefix_name=None)
+
+    # log the best model path
+    if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:
+        logger.log_hyperparams({'best_model_path': args.ckpt})
+    else:
+        logger.log_hyperparams({'best_model_path': checkpoint_callback.best_model_path})
 
     # bye bye
     shell_logger.info("Bye bye!")
