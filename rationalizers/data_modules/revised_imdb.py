@@ -31,6 +31,7 @@ class RevisedIMDBDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
+        self.augmented = d_params.get("augmented", False)
 
         # objects
         self.dataset = None
@@ -103,6 +104,7 @@ class RevisedIMDBDataModule(BaseDataModule):
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
+            # augmented=self.augmented,  # TODO: fix this
         )
 
         # build tokenizer

@@ -1,12 +1,13 @@
 from itertools import chain
+
 import datasets as hf_datasets
 from transformers import PreTrainedTokenizerBase
 
-from rationalizers.data_modules.snli import SNLIDataModule
+from rationalizers.data_modules.imdb import ImdbDataModule
 
 
-class MultiNLIDataModule(SNLIDataModule):
-    """DataModule for MultiNLI Dataset."""
+class SST2DataModule(ImdbDataModule):
+    """DataModule for Stanford Sentiment Treebank Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         """
@@ -14,9 +15,8 @@ class MultiNLIDataModule(SNLIDataModule):
         """
         super().__init__(d_params, tokenizer=tokenizer)
         # hard-coded stuff
-        self.path = "multi_nli"  # hf_datasets will handle everything
-        self.is_multilabel = True
-        self.nb_classes = 3  # entailment, neutral, contradiction
+        self.path = "gpt3mix/sst2"
+        self.test_only = True
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
@@ -24,46 +24,42 @@ class MultiNLIDataModule(SNLIDataModule):
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
-
-        modified_dataset = self.dataset["validation_matched"].train_test_split(
-            test_size=0.5
-        )
-        self.dataset["validation"] = modified_dataset["train"]
-        self.dataset["test"] = modified_dataset["test"]
+        for split in ["train", "validation"]:
+            if split in self.dataset and self.test_only:
+                del self.dataset[split]
 
         # build tokenize rand label encoder
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
             tok_samples = chain(
-                self.dataset["train"]["premise"],
-                self.dataset["train"]["hypothesis"],
-                self.dataset["validation"]["premise"],
-                self.dataset["validation"]["hypothesis"],
+                self.dataset["train"]["text"],
+                self.dataset["validation"]["text"]
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
-        # map strings to ids
+        # function to map strings to ids
         def _encode(example: dict):
             if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                example["prem_ids"] = self.tokenizer(
-                    example["premise"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["hyp_ids"] = self.tokenizer(
-                    example["hypothesis"].strip(),
+                example["input_ids"] = self.tokenizer(
+                    example["text"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
                 )["input_ids"]
             else:
-                example["prem_ids"] = self.tokenizer.encode(example["premise"].strip())
-                example["hyp_ids"] = self.tokenizer.encode(example["hypothesis"].strip())
+                example["input_ids"] = self.tokenizer.encode(example["text"].strip())
             return example
 
+        # function to filter out examples longer than max_seq_len
+        def _filter(example: dict):
+            return len(example["input_ids"]) <= self.max_seq_len
+
+        # apply encode and filter
         self.dataset = self.dataset.map(_encode)
+        self.dataset = self.dataset.filter(_filter)
+
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=["prem_ids", "hyp_ids", "label",],
+            columns=["input_ids", "label"],
             output_all_columns=True,
         )

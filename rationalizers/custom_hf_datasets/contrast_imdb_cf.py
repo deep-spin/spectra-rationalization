@@ -68,7 +68,7 @@ def merge_csvs(fname_orig, fname_cont):
         axis=1
     )
     df_cat = pd.concat([df_orig, df_cont], axis=1)
-    dir_name = os.path.basename(fname_cont)
+    dir_name = os.path.dirname(fname_cont)
     split_name = 'dev.tsv' if 'dev' in fname_orig else 'test.tsv'
     fname = os.path.join(dir_name, split_name)
     df_cat.to_csv(fname, sep='\t', index=False)

@@ -47,11 +47,29 @@ _CITATION = """\
 
 _DESCRIPTION = """\
 This dataset consists of contrastive movie reviews from the IMDB dataset.
-It contains only the counterfactuals for each review.
+It contains both the originals and counterfactuals for each review.
 """
 
-_URL_DEV = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/dev_contrast.tsv"
-_URL_TEST = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/test_contrast.tsv"
+_URL_DEV_CONT = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/dev_contrast.tsv"
+_URL_DEV_ORIG = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/dev_original.tsv"
+_URL_TEST_CONT = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/test_contrast.tsv"
+_URL_TEST_ORIG = "https://github.com/allenai/contrast-sets/raw/main/IMDb/data/test_original.tsv"
+
+
+def merge_csvs(fname_orig, fname_cont):
+    import pandas as pd
+    df_orig = pd.read_csv(fname_orig, delimiter='\t')
+    df_orig['is_original'] = [1] * len(df_orig)
+    df_orig['batch_id'] = list(range(len(df_orig)))
+    df_cont = pd.read_csv(fname_cont, delimiter='\t')
+    df_cont['is_original'] = [0] * len(df_cont)
+    df_cont['batch_id'] = list(range(len(df_cont)))
+    df_cat = pd.concat([df_orig, df_cont], axis=0)
+    dir_name = os.path.dirname(fname_cont)
+    split_name = 'dev.tsv' if 'dev' in fname_orig else 'test.tsv'
+    fname = os.path.join(dir_name, split_name)
+    df_cat.to_csv(fname, sep='\t', index=False)
+    return fname
 
 
 class ContrastIMDBDataset(datasets.GeneratorBasedBuilder):
@@ -89,8 +107,12 @@ class ContrastIMDBDataset(datasets.GeneratorBasedBuilder):
 
     def _split_generators(self, dl_manager):
         """Returns SplitGenerators."""
-        dl_fname_dev = dl_manager.download_and_extract(_URL_DEV)
-        dl_fname_test = dl_manager.download_and_extract(_URL_TEST)
+        dl_fname_dev_orig = dl_manager.download_and_extract(_URL_DEV_ORIG)
+        dl_fname_dev_cont = dl_manager.download_and_extract(_URL_DEV_CONT)
+        dl_fname_dev = merge_csvs(dl_fname_dev_orig, dl_fname_dev_cont)
+        dl_fname_test_orig = dl_manager.download_and_extract(_URL_TEST_ORIG)
+        dl_fname_test_cont = dl_manager.download_and_extract(_URL_TEST_CONT)
+        dl_fname_test = merge_csvs(dl_fname_test_orig, dl_fname_test_cont)
         filepaths = {
             "train": dl_fname_dev,  # use dev for training
             "dev": dl_fname_dev,
@@ -118,6 +140,6 @@ class ContrastIMDBDataset(datasets.GeneratorBasedBuilder):
             yield i, {
                 "tokens": row['Text'],
                 "label": row['Sentiment'],
-                "batch_id": i,
-                "is_original": True,
+                "batch_id": row['batch_id'],
+                "is_original": row['is_original'] == 1,
             }
