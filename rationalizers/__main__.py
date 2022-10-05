@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from rationalizers import predict, train, resume, cf_train
+from rationalizers import predict, train, resume, cf_train, cf_predict
 from rationalizers.utils import (
     configure_output_dir,
     configure_seed,
@@ -13,24 +13,12 @@ from rationalizers.utils import (
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", type=str, choices=["train", "cf_train", "predict", "resume"])
+    parser.add_argument("task", type=str, choices=["train", "cf_train", "predict", "cf_predict", "resume"])
     parser.add_argument("--config", type=str, help="Path to YAML config file.")
     parser.add_argument(
         "--ckpt",
         type=str,
         help="Path to a saved model checkpoint. Used for `predict` only. Will overwrite config file's option.",
-    )
-    parser.add_argument(
-        "--factual-ckpt",
-        type=str,
-        help="Path to a saved factual rationalizer. "
-             "Used for `cf_train` and `cf_predict` only. "
-             "Will overwrite config file's option.",
-    )
-    parser.add_argument(
-        "--share-tokenizers",
-        action="store_true",
-        help="Share factual and counterfactual tokenizers",
     )
     parser.add_argument(
         "--seed",
@@ -52,7 +40,7 @@ if __name__ == "__main__":
     if tmp_args.task in ["train", "cf_train"]:
         config_dict = {**general_dict, **yaml_config_dict["train"]}
 
-    elif tmp_args.task == "predict":
+    elif tmp_args.task in ["predict", "cf_predict"]:
         ckpt_path = None
         if tmp_args.ckpt is not None:
             ckpt_path = tmp_args.ckpt
@@ -127,4 +115,8 @@ if __name__ == "__main__":
         resume.run(args)
     elif tmp_args.task == "predict":
         predict.run(args)
+    elif tmp_args.task == "cf_predict":
+        cf_predict.run(args)
+    elif tmp_args.task == "search":
+        pass
         # search.run(args)
