@@ -875,9 +875,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
         labels = batch["labels"]
-        cf_input_ids = batch["cf_input_ids"]
+        cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
-        cf_labels = batch["cf_labels"]
+        cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
         prefix = "train"
 
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
@@ -936,9 +936,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
         labels = batch["labels"]
-        cf_input_ids = batch["cf_input_ids"]
+        cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
-        cf_labels = batch["cf_labels"]
+        cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
 
         # forward-pass
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
@@ -971,19 +971,19 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
         # get counterfactuals
-        if 't5' in self.cf_gen_arch:
-            gen_ids = x_tilde
-        else:
+        gen_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
+        if 't5' not in self.cf_gen_arch:
             z_1 = (z_tilde > 0).long()
-            gen_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-            gen_ids = z_1 * gen_ids + (1 - z_1) * input_ids
+            gen_ids = z_1 * gen_ids + (1 - z_1) * cf_input_ids
         cfs = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
         cf_lengths = (gen_ids != constants.PAD_ID).long().sum(-1).tolist()
 
         # output to be stacked across iterations
         output = {
-            f"{prefix}_sum_loss": loss.item(),
-            f"{prefix}_ps": ff_loss_stats[prefix + "_ps"],
+            f"{prefix}_ff_sum_loss": ff_loss.item(),
+            f"{prefix}_cf_sum_loss": cf_loss.item(),
+            f"{prefix}_ff_ps": ff_loss_stats[prefix + "_ps"],
+            f"{prefix}_cf_ps": cf_loss_stats[prefix + "_cf_ps"],
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
             f"{prefix}_pieces": pieces,
@@ -1001,10 +1001,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         if "annotations" in batch.keys():
             output[f"{prefix}_annotations"] = batch["annotations"]
-
         if "mse" in ff_loss_stats.keys():
-            output[f"{prefix}_mse"] = ff_loss_stats["mse"]
-
+            output[f"{prefix}_ff_mse"] = ff_loss_stats["mse"]
+        if "mse" in cf_loss_stats.keys():
+            output[f"{prefix}_cf_mse"] = cf_loss_stats["mse"]
         return output
 
     def _shared_eval_epoch_end(self, outputs: list, prefix: str):
@@ -1017,64 +1017,69 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # assume that `outputs` is a list containing dicts with the same keys
         stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
-        # average across batches
-        avg_outputs = {
-            f"avg_{prefix}_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
-            f"avg_{prefix}_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
-        }
-
-        shell_logger.info(
-            f"Avg {prefix} sum loss: {avg_outputs[f'avg_{prefix}_sum_loss']:.4}"
-        )
-        shell_logger.info(f"Avg {prefix} ps: {avg_outputs[f'avg_{prefix}_ps']:.4}")
-
-        dict_metrics = {
-            f"avg_{prefix}_ps": avg_outputs[f"avg_{prefix}_ps"],
-            f"avg_{prefix}_sum_loss": avg_outputs[f"avg_{prefix}_sum_loss"],
-        }
-
-        # log rationales
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
-        if prefix != 'test':
-            shuffle(idxs)
-            idxs = idxs[:10]
-        else:
-            shuffle(idxs)
-            idxs = idxs[:100]
+        # useful functions
         select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
-        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
-        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
-        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
-        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
-        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+
+        # sample a few examples to be logged in wandb
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        if self.log_rationales_in_wandb:
+            if prefix != 'test':
+                shuffle(idxs)
+                idxs = idxs[:10]
+            else:
+                shuffle(idxs)
+                idxs = idxs[:100]
+
+            # log rationales
+            pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+            scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+            gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+            pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+            lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+            html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+            self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+
+            # log counterfactuals
+            cfs = select(unroll(stacked_outputs[f"{prefix}_cfs"]))
+            scores = detach(select(unroll(stacked_outputs[f"{prefix}_cf_z"])))
+            gold = select(unroll(stacked_outputs[f"{prefix}_cf_labels"]))
+            pred = detach(select(unroll(stacked_outputs[f"{prefix}_cf_predictions"])))
+            lens = select(unroll(stacked_outputs[f"{prefix}_cf_lengths"]))
+            html_string = get_html_rationales(cfs, scores, gold, pred, lens)
+            self.logger.experiment.log({f"{prefix}_counterfactuals": wandb.Html(html_string)})
 
         # save rationales
         if self.hparams.save_rationales:
+            # factual rationales
             scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
             lens = unroll(stacked_outputs[f"{prefix}_lengths"])
-            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_ff_rationales.txt')
             shell_logger.info(f'Saving rationales in {filename}...')
             save_rationales(filename, scores, lens)
 
-        # log counterfactuals
-        cfs = select(unroll(stacked_outputs[f"{prefix}_cfs"]))
-        scores = detach(select(unroll(stacked_outputs[f"{prefix}_cf_z"])))
-        gold = select(unroll(stacked_outputs[f"{prefix}_cf_labels"]))
-        pred = detach(select(unroll(stacked_outputs[f"{prefix}_cf_predictions"])))
-        lens = select(unroll(stacked_outputs[f"{prefix}_cf_lengths"]))
-        html_string = get_html_rationales(cfs, scores, gold, pred, lens)
-        self.logger.experiment.log({f"{prefix}_counterfactuals": wandb.Html(html_string)})
+            # counterfactual rationales
+            scores = detach(unroll(stacked_outputs[f"{prefix}_cf_z"]))
+            lens = unroll(stacked_outputs[f"{prefix}_cf_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_cf_rationales.txt')
+            shell_logger.info(f'Saving rationales in {filename}...')
+            save_rationales(filename, scores, lens)
 
-        # save rationales
+        # save counterfactuals
         if self.hparams.save_counterfactuals:
             pieces = unroll(stacked_outputs[f"{prefix}_cfs"])
             lens = unroll(stacked_outputs[f"{prefix}_cf_lengths"])
             filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_counterfactuals.txt')
             shell_logger.info(f'Saving counterfactuals in {filename}...')
             save_counterfactuals(filename, pieces, lens)
+
+        # log metrics
+        dict_metrics = {
+            f"avg_{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ff_ps"]),
+            f"avg_{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ff_sum_loss"]),
+            f"avg_{prefix}_cf_sum_loss": np.mean(stacked_outputs[f"{prefix}_cf_ps"]),
+            f"avg_{prefix}_cf_ps": np.mean(stacked_outputs[f"{prefix}_cf_sum_loss"]),
+        }
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
@@ -1083,13 +1088,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 stacked_outputs["test_annotations"],
                 stacked_outputs["test_lengths"],
             )
-            shell_logger.info(
-                f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"
-            )
-            shell_logger.info(
-                f"Rationales macro recall: {rat_metrics[f'macro_recall']:.4}"
-            )
-            shell_logger.info(f"Rationales macro f1: {rat_metrics[f'f1_score']:.4}")
+            dict_metrics[f"{prefix}_ff_rat_precision"] = rat_metrics["macro_precision"]
+            dict_metrics[f"{prefix}_ff_rat_recall"] = rat_metrics["macro_recall"]
+            dict_metrics[f"{prefix}_ff_rat_f1"] = rat_metrics["f1_score"]
 
         # log classification metrics
         if self.is_multilabel:
@@ -1115,7 +1116,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 cf_precision = self.cf_test_precision(cf_preds, cf_labels)
                 cf_recall = self.cf_test_recall(cf_preds, cf_labels)
                 cf_f1_score = 2 * cf_precision * cf_recall / (cf_precision + cf_recall)
-
             dict_metrics[f"{prefix}_ff_accuracy"] = ff_accuracy
             dict_metrics[f"{prefix}_ff_precision"] = ff_precision
             dict_metrics[f"{prefix}_ff_recall"] = ff_recall
@@ -1124,90 +1124,23 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             dict_metrics[f"{prefix}_cf_precision"] = cf_precision
             dict_metrics[f"{prefix}_cf_recall"] = cf_recall
             dict_metrics[f"{prefix}_cf_f1score"] = cf_f1_score
-
-            shell_logger.info(f"{prefix} ff_acc: {ff_accuracy:.4}")
-            shell_logger.info(f"{prefix} ff_f1: {ff_f1_score:.4}")
-            shell_logger.info(f"{prefix} cf_acc: {cf_accuracy:.4}")
-            shell_logger.info(f"{prefix} cf_f1: {cf_f1_score:.4}")
-
-            self.log(
-                f"{prefix}_ff_accuracy",
-                dict_metrics[f"{prefix}_ff_accuracy"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-            self.log(
-                f"{prefix}_ff_f1score",
-                dict_metrics[f"{prefix}_ff_f1score"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-            self.log(
-                f"{prefix}_cf_accuracy",
-                dict_metrics[f"{prefix}_cf_accuracy"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-            self.log(
-                f"{prefix}_cf_f1score",
-                dict_metrics[f"{prefix}_cf_f1score"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-
         else:
-            avg_outputs[f"avg_{prefix}_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
-            shell_logger.info(
-                f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
-            )
-            dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
+            dict_metrics[f"{prefix}_ff_mse"] = np.mean(stacked_outputs[f"{prefix}_ff_mse"])
+            dict_metrics[f"{prefix}_cf_mse"] = np.mean(stacked_outputs[f"{prefix}_cf_mse"])
 
+        # log all saved metrics
+        for metric_name, metric_value in dict_metrics.items():
+            shell_logger.info("{}: {:.4f}".format(metric_name, metric_value))
             self.log(
-                f"{prefix}_MSE",
-                dict_metrics[f"avg_{prefix}_mse"],
+                metric_name,
+                metric_value,
                 prog_bar=False,
                 logger=True,
                 on_step=False,
                 on_epoch=True,
             )
 
+        # aggregate across epochs
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
 
-        self.log(
-            f"avg_{prefix}_sum_loss",
-            dict_metrics[f"avg_{prefix}_sum_loss"],
-            prog_bar=False,
-            logger=True,
-            on_step=False,
-            on_epoch=True,
-        )
-
-        if self.is_multilabel:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"{prefix}_ff_accuracy": ff_accuracy,
-                f"{prefix}_ff_precision": ff_precision,
-                f"{prefix}_ff_recall": ff_recall,
-                f"{prefix}_ff_f1score": ff_f1_score,
-                f"{prefix}_cf_accuracy": cf_accuracy,
-                f"{prefix}_cf_precision": cf_precision,
-                f"{prefix}_cf_recall": cf_recall,
-                f"{prefix}_cf_f1score": cf_f1_score,
-            }
-        else:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
-            }
-
-        return output
+        return dict_metrics
