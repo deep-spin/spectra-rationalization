@@ -52,7 +52,7 @@ def run(args):
     )
 
     # set the model to eval mode
-    model.is_predict_time = True
+    model.log_rationales_in_wandb = False
     model = model.eval()
 
     # test

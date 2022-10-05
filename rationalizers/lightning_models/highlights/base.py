@@ -40,6 +40,8 @@ class BaseRationalizer(pl.LightningModule):
         # to be used at the output layer
         self.nb_classes = nb_classes
         self.is_multilabel = is_multilabel
+        # whether we should log rationales in wandb
+        self.log_rationales_in_wandb = True
 
         # define metrics
         if self.is_multilabel:
@@ -423,15 +425,15 @@ class BaseRationalizer(pl.LightningModule):
         named_params = module.named_parameters() if module is not None else self.named_parameters()
         for name, p in named_params:
             if name.startswith("emb") or "lagrange" in name:
-                print("{:10s} {:20s} {}".format("unchanged", name, p.shape))
+                shell_logger.info("{:10s} {:20s} {}".format("unchanged", name, p.shape))
             elif "lstm" in name and len(p.shape) > 1:
-                print("{:10s} {:20s} {}".format("xavier_n", name, p.shape))
+                shell_logger.info("{:10s} {:20s} {}".format("xavier_n", name, p.shape))
                 xavier_uniform_n_(p)
             elif len(p.shape) > 1:
-                print("{:10s} {:20s} {}".format("xavier", name, p.shape))
+                shell_logger.info("{:10s} {:20s} {}".format("xavier", name, p.shape))
                 torch.nn.init.xavier_uniform_(p)
             elif "bias" in name:
-                print("{:10s} {:20s} {}".format("zeros", name, p.shape))
+                shell_logger.info("{:10s} {:20s} {}".format("zeros", name, p.shape))
                 torch.nn.init.constant_(p, 0.0)
             else:
-                print("{:10s} {:20s} {}".format("unchanged", name, p.shape))
+                shell_logger.info("{:10s} {:20s} {}".format("unchanged", name, p.shape))

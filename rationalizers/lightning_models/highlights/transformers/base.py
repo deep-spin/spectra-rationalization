@@ -489,37 +489,26 @@ class TransformerBaseRationalizer(BaseRationalizer):
         # assume that `outputs` is a list containing dicts with the same keys
         stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
-        # average across batches
-        avg_outputs = {
-            f"avg_{prefix}_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
-            f"avg_{prefix}_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
-        }
-
-        shell_logger.info(f"Avg {prefix} sum loss: {avg_outputs[f'avg_{prefix}_sum_loss']:.4}")
-        shell_logger.info(f"Avg {prefix} ps: {avg_outputs[f'avg_{prefix}_ps']:.4}")
-
-        dict_metrics = {
-            f"avg_{prefix}_ps": avg_outputs[f"avg_{prefix}_ps"],
-            f"avg_{prefix}_sum_loss": avg_outputs[f"avg_{prefix}_sum_loss"],
-        }
+        # useful functions
+        select = lambda v: [v[i] for i in idxs]
+        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
 
         # log rationales
         idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
-        if prefix != 'test':
-            shuffle(idxs)
-            idxs = idxs[:10]
-        else:
-            shuffle(idxs)
-            idxs = idxs[:100]
-        select = lambda v: [v[i] for i in idxs]
-        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
-        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
-        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
-        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
-        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
-        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+        if self.log_rationales_in_wandb:
+            if prefix != 'test':
+                shuffle(idxs)
+                idxs = idxs[:10]
+            else:
+                shuffle(idxs)
+                idxs = idxs[:100]
+            pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+            scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+            gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+            pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+            lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+            html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+            self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
         # save rationales
         if self.hparams.save_rationales:
@@ -529,6 +518,12 @@ class TransformerBaseRationalizer(BaseRationalizer):
             shell_logger.info(f'Saving rationales in {filename}...')
             save_rationales(filename, scores, lens)
 
+        # log metrics
+        dict_metrics = {
+            f"{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
+            f"{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ps"]),
+        }
+
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
             rat_metrics = evaluate_rationale(
@@ -536,13 +531,9 @@ class TransformerBaseRationalizer(BaseRationalizer):
                 stacked_outputs["test_annotations"],
                 stacked_outputs["test_lengths"],
             )
-            shell_logger.info(
-                f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"
-            )
-            shell_logger.info(
-                f"Rationales macro recall: {rat_metrics[f'macro_recall']:.4}"
-            )
-            shell_logger.info(f"Rationales macro f1: {rat_metrics[f'f1_score']:.4}")
+            dict_metrics[f"{prefix}_ff_rat_precision"] = rat_metrics["macro_precision"]
+            dict_metrics[f"{prefix}_ff_rat_recall"] = rat_metrics["macro_recall"]
+            dict_metrics[f"{prefix}_ff_rat_f1"] = rat_metrics["f1_score"]
 
         # log classification metrics
         if self.is_multilabel:
@@ -558,73 +549,26 @@ class TransformerBaseRationalizer(BaseRationalizer):
                 ff_precision = self.ff_test_precision(preds, labels)
                 ff_recall = self.ff_test_recall(preds, labels)
                 ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
-
             dict_metrics[f"{prefix}_ff_accuracy"] = ff_accuracy
             dict_metrics[f"{prefix}_ff_precision"] = ff_precision
             dict_metrics[f"{prefix}_ff_recall"] = ff_recall
             dict_metrics[f"{prefix}_ff_f1score"] = ff_f1_score
-
-            shell_logger.info(f"{prefix} ff_acc: {ff_accuracy:.4}")
-            shell_logger.info(f"{prefix} ff_f1: {ff_f1_score:.4}")
-
-            self.log(
-                f"{prefix}_ff_accuracy",
-                dict_metrics[f"{prefix}_ff_accuracy"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-            self.log(
-                f"{prefix}_ff_f1score",
-                dict_metrics[f"{prefix}_ff_f1score"],
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
-
         else:
-            avg_outputs[f"avg_{prefix}_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
-            shell_logger.info(
-                f"Avg {prefix} MSE: {avg_outputs[f'avg_{prefix}_mse']:.4}"
-            )
-            dict_metrics[f"avg_{prefix}_mse"] = avg_outputs[f"avg_{prefix}_mse"]
+            dict_metrics[f"{prefix}_ff_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
 
+        # log all saved metrics
+        for metric_name, metric_value in dict_metrics.items():
+            shell_logger.info("{}: {:.4f}".format(metric_name, metric_value))
             self.log(
-                f"{prefix}_MSE",
-                dict_metrics[f"avg_{prefix}_mse"],
+                metric_name,
+                metric_value,
                 prog_bar=False,
                 logger=True,
                 on_step=False,
                 on_epoch=True,
             )
 
+        # aggregate across epochs
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
 
-        self.log(
-            f"avg_{prefix}_sum_loss",
-            dict_metrics[f"avg_{prefix}_sum_loss"],
-            prog_bar=False,
-            logger=True,
-            on_step=False,
-            on_epoch=True,
-        )
-
-        if self.is_multilabel:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"{prefix}_ff_accuracy": ff_accuracy,
-                f"{prefix}_ff_precision": ff_precision,
-                f"{prefix}_ff_recall": ff_recall,
-                f"{prefix}_ff_f1score": ff_f1_score,
-            }
-        else:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
-            }
-
-        return output
+        return dict_metrics
