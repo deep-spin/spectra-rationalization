@@ -39,11 +39,6 @@ def run(args):
     # update constants
     constants.update_constants(dm.tokenizer)
 
-    # if the tokenizer is not loaded, we need to setup the data module
-    if dm.tokenizer is None:
-        dm.prepare_data()
-        dm.setup()
-
     # rebuild model and load weights from last checkpoint
     shell_logger.info("Building model and loading checkpoint...")
     model_cls = available_models[args.model]
