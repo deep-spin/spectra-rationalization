@@ -199,16 +199,11 @@ def get_z_stats(z=None, mask=None):
     :param mask: mask in [B, T]
     :return:
     """
-    z = z.to(mask.device)
-    z = torch.where(mask, z, z.new_full([1], 1e2))
-
-    num_0 = (z == 0.0).sum().item()
-    num_c = ((z > 0.0) & (z < 1.0)).sum().item()
-    num_1 = (z == 1.0).sum().item()
-
-    num_0 + num_c + num_1
+    z_masked = z.masked_fill(~mask.bool(), 1e2)
+    num_0 = (z_masked == 0.0).sum().item()
+    num_c = ((z_masked > 0.0) & (z_masked < 1.0)).sum().item()
+    num_1 = (z_masked == 1.0).sum().item()
     mask_total = mask.sum().item()
-    # assert total == mask_total, "total mismatch"
     return num_0, num_c, num_1, mask_total
 
 
