@@ -84,7 +84,7 @@ train:
     cf_manual_sample: True
     cf_use_reinforce: False
     cf_use_reinforce_baseline: False
-    cf_prepend_label_for_mice: True
+    cf_prepend_label_for_mice: False
     cf_generate_kwargs:
         do_sample: True             # deterministic or stochastic generation
         num_beams: 1                # mice: 15
