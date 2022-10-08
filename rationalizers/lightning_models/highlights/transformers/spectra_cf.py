@@ -58,7 +58,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.ff_gen_arch = h_params.get("gen_arch", "bert-base-multilingual-cased")
         self.ff_gen_emb_requires_grad = h_params.get("gen_emb_requires_grad", False)
         self.ff_gen_encoder_requires_grad = h_params.get("gen_encoder_requires_grad", True)
-        self.ff_gen_use_decoder = h_params.get("gen_use_encoder", False)
+        self.ff_gen_use_decoder = h_params.get("gen_use_decoder", False)
         self.ff_pred_arch = h_params.get("pred_arch", "bert-base-multilingual-cased")
         self.ff_pred_emb_requires_grad = h_params.get("pred_emb_requires_grad", False)
         self.ff_pred_encoder_requires_grad = h_params.get("pred_encoder_requires_grad", True)
@@ -358,7 +358,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # prepend label for mice supervision-mode
         if 'mice' in self.cf_gen_arch and self.cf_prepend_label_for_mice:
-            x_cf, z_cf, mask_cf = prepend_label_for_mice_t5(
+            x_cf, z, mask_cf = prepend_label_for_mice_t5(
                 y_hat, x_cf, z, mask_cf, self.tokenizer, self.cf_task_for_mice
             )
 
@@ -1075,10 +1075,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # log metrics
         dict_metrics = {
-            f"avg_{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ff_ps"]),
-            f"avg_{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ff_sum_loss"]),
-            f"avg_{prefix}_cf_sum_loss": np.mean(stacked_outputs[f"{prefix}_cf_ps"]),
-            f"avg_{prefix}_cf_ps": np.mean(stacked_outputs[f"{prefix}_cf_sum_loss"]),
+            f"avg_{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ff_sum_loss"]),
+            f"avg_{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ff_ps"]),
+            f"avg_{prefix}_cf_sum_loss": np.mean(stacked_outputs[f"{prefix}_cf_sum_loss"]),
+            f"avg_{prefix}_cf_ps": np.mean(stacked_outputs[f"{prefix}_cf_ps"]),
         }
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)

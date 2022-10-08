@@ -520,8 +520,8 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # log metrics
         dict_metrics = {
-            f"{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
-            f"{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ps"]),
+            f"{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
+            f"{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
         }
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)

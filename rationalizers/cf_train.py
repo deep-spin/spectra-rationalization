@@ -103,7 +103,7 @@ def run(args):
 
         if "factual_ckpt" in dict_args.keys() and dict_args['factual_ckpt'] is not None:
             shell_logger.info("Loading rationalizer from {}...".format(args.factual_ckpt))
-            factual_state_dict = load_torch_object(args.ckpt)['state_dict']
+            factual_state_dict = load_torch_object(args.factual_ckpt)['state_dict']
             model.load_state_dict(factual_state_dict, strict=False)
 
         shell_logger.info("Building trainer...")
