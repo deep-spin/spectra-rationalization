@@ -35,7 +35,7 @@ class TransformerHardKumaRationalizer(TransformerBaseRationalizer):
         self.explainer = explainer_cls(
             h_params,
             enc_size=self.ff_gen_hidden_size,
-            temperature=h_params.get('temperature', 1.0),
+            temperature=h_params.get('explainer_temperature', 1.0),
         )
 
     def get_factual_loss(self, y_hat, y, z, mask, prefix):
