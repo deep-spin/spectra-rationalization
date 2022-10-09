@@ -226,6 +226,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self,
         x: torch.LongTensor,
         mask: torch.BoolTensor = None,
+        expl_mask: torch.BoolTensor = None,
         current_epoch=None,
     ):
         """
@@ -233,20 +234,22 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
         # factual flow
-        z, y_hat = self.get_factual_flow(x, mask=mask)
+        z, y_hat = self.get_factual_flow(x, mask=mask, expl_mask=expl_mask)
         # return everything as output (useful for computing the loss)
         return z, y_hat
 
-    def get_factual_flow(self, x, mask=None, z=None):
+    def get_factual_flow(self, x, mask=None, expl_mask=None, z=None):
         """
         Compute the factual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
@@ -281,8 +284,9 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        z, z_dist = self.explainer(gen_h, mask) if z is None else z
-        z_mask = (z * mask.float()).unsqueeze(-1)
+        e_mask = mask & expl_mask if expl_mask is not None else mask
+        z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
+        z_mask = (z * e_mask.float()).unsqueeze(-1)
         self.ff_z = z
         self.ff_z_dist = z_dist
 
@@ -402,9 +406,10 @@ class TransformerBaseRationalizer(BaseRationalizer):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
         labels = batch["labels"]
+        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
         prefix = "train"
 
-        z, y_hat = self(input_ids, mask, current_epoch=self.current_epoch)
+        z, y_hat = self(input_ids, mask, expl_mask=expl_mask, current_epoch=self.current_epoch)
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
