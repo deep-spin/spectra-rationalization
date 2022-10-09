@@ -443,10 +443,11 @@ class TransformerBaseRationalizer(BaseRationalizer):
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
+        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
         labels = batch["labels"]
 
         # forward-pass
-        z, y_hat = self(input_ids, mask, current_epoch=self.current_epoch)
+        z, y_hat = self(input_ids, mask, expl_mask=expl_mask, current_epoch=self.current_epoch)
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)

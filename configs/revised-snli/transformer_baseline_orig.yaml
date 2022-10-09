@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-snli-baseline-transformer/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-snli-baseline-orig-transformer/'  # path to save logs and models
 
 
 # training args

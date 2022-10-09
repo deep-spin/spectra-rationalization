@@ -353,6 +353,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param mask_cf: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param expl_mask_cf: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
@@ -420,6 +421,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
+        import ipdb; ipdb.set_trace()
         e_mask = mask & expl_mask if expl_mask is not None else mask
         z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
         z_mask = (z * e_mask.float()).unsqueeze(-1)
@@ -899,10 +901,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
         cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
+        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
+        cf_expl_mask = batch["cf_token_type_ids"] == 0 if "cf_token_type_ids" in batch else None
         prefix = "train"
 
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, current_epoch=self.current_epoch
+            input_ids, cf_input_ids, mask, cf_mask, expl_mask, cf_expl_mask, current_epoch=self.current_epoch
         )
 
         # compute factual loss
@@ -960,10 +964,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
         cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
+        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
+        cf_expl_mask = batch["cf_token_type_ids"] == 0 if "cf_token_type_ids" in batch else None
 
         # forward-pass
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, current_epoch=self.current_epoch
+            input_ids, cf_input_ids, mask, cf_mask, expl_mask, cf_expl_mask, current_epoch=self.current_epoch
         )
 
         # compute factual loss
