@@ -421,7 +421,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        import ipdb; ipdb.set_trace()
         e_mask = mask & expl_mask if expl_mask is not None else mask
         z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
         z_mask = (z * e_mask.float()).unsqueeze(-1)
