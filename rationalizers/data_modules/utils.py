@@ -133,12 +133,8 @@ def concat_sequences(src_ids, mt_ids):
     # So the concatenation will result in:
     # <bos> <mt> <eos> <bos> <src> <eos> <bos> <ref> <eos> ...
     # for some model, <bos> and <eos> might be None, so they are not concatenated.
-    input_ids = torch.cat([mt_ids, src_ids], dim=-1)
-    token_type_ids = torch.cat(
-        [
-            torch.zeros_like(mt_ids),
-            torch.ones_like(src_ids)
-        ],
-        dim=-1
-    )
+    x1 = torch.as_tensor(mt_ids)
+    x2 = torch.as_tensor(src_ids)
+    input_ids = torch.cat([x1, x2], dim=-1)
+    token_type_ids = torch.cat([torch.zeros_like(x1), torch.ones_like(x2)], dim=-1)
     return input_ids, token_type_ids

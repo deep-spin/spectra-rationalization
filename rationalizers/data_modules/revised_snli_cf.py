@@ -32,6 +32,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
+        self.concat_inputs = d_params.get("concat_inputs", True)
 
         # objects
         self.dataset = None
@@ -72,8 +73,8 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
         # pad and stack input ids
-        def pad_and_stack_ids(x):
-            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+        def pad_and_stack_ids(x, pad_id=constants.PAD_ID):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=pad_id)
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -81,56 +82,106 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                 return torch.stack(y, dim=0)
             return y
 
-        prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
-        hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
-        cf1_prem_ids, cf1_prem_lengths = pad_and_stack_ids(collated_samples["cf1_prem_ids"])
-        cf1_hyp_ids, cf1_hyp_lengths = pad_and_stack_ids(collated_samples["cf1_hyp_ids"])
-        cf2_prem_ids, cf2_prem_lengths = pad_and_stack_ids(collated_samples["cf2_prem_ids"])
-        cf2_hyp_ids, cf2_hyp_lengths = pad_and_stack_ids(collated_samples["cf2_hyp_ids"])
+        if self.concat_inputs:
+            input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
+            token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"], pad_id=2)
+            cf1_input_ids, cf1_lengths = pad_and_stack_ids(collated_samples["cf1_input_ids"])
+            cf1_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf1_token_type_ids"], pad_id=2)
+            cf2_input_ids, cf2_lengths = pad_and_stack_ids(collated_samples["cf2_input_ids"])
+            cf2_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf2_token_type_ids"], pad_id=2)
 
-        # stack labels
-        labels = stack_labels(collated_samples["label"])
-        cf1_labels = stack_labels(collated_samples["cf1_label"])
-        cf2_labels = stack_labels(collated_samples["cf2_label"])
+            # stack labels
+            labels = stack_labels(collated_samples["label"])
+            cf1_labels = stack_labels(collated_samples["cf1_label"])
+            cf2_labels = stack_labels(collated_samples["cf2_label"])
 
-        # keep tokens in raw format
-        prem_tokens = collated_samples["prem"]
-        hyp_tokens = collated_samples["hyp"]
-        cf1_prem_tokens = collated_samples["cf1_prem"]
-        cf1_hyp_tokens = collated_samples["cf1_hyp"]
-        cf2_prem_tokens = collated_samples["pcf2_rem"]
-        cf2_hyp_tokens = collated_samples["cf2_hyp"]
+            # keep tokens in raw format
+            prem_tokens = collated_samples["prem"]
+            hyp_tokens = collated_samples["hyp"]
+            tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(prem_tokens, hyp_tokens)]
+            cf1_prem_tokens = collated_samples["cf1_prem"]
+            cf1_hyp_tokens = collated_samples["cf1_hyp"]
+            cf1_tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(cf1_prem_tokens, cf1_hyp_tokens)]
+            cf2_prem_tokens = collated_samples["cf2_prem"]
+            cf2_hyp_tokens = collated_samples["cf2_hyp"]
+            cf2_tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(cf2_prem_tokens, cf2_hyp_tokens)]
 
-        # metadata
-        batch_id = collated_samples["batch_id"]
-        is_original = collated_samples["is_original"]
+            # metadata
+            batch_id = collated_samples["batch_id"]
+            is_original = collated_samples["is_original"]
 
-        # return batch to the data loader
-        batch = {
-            "prem_ids": prem_ids,
-            "hyp_ids": hyp_ids,
-            "prem_lengths": prem_lengths,
-            "hyp_lengths": hyp_lengths,
-            "labels": labels,
-            "cf1_prem_ids": cf1_prem_ids,
-            "cf1_hyp_ids": cf1_hyp_ids,
-            "cf1_prem_lengths": cf1_prem_lengths,
-            "cf1_hyp_lengths": cf1_hyp_lengths,
-            "cf1_labels": cf1_labels,
-            "cf2_prem_ids": cf2_prem_ids,
-            "cf2_hyp_ids": cf2_hyp_ids,
-            "cf2_prem_lengths": cf2_prem_lengths,
-            "cf2_hyp_lengths": cf2_hyp_lengths,
-            "cf2_labels": cf2_labels,
-            "prem_tokens": prem_tokens,
-            "hyp_tokens": hyp_tokens,
-            "cf1_prem_tokens": cf1_prem_tokens,
-            "cf1_hyp_tokens": cf1_hyp_tokens,
-            "cf2_prem_tokens": cf2_prem_tokens,
-            "cf2_hyp_tokens": cf2_hyp_tokens,
-            "batch_id": batch_id,
-            "is_original": is_original,
-        }
+            # return batch to the data loader
+            batch = {
+                "input_ids": input_ids,
+                "token_type_ids": token_type_ids,
+                "lengths": lengths,
+                "labels": labels,
+                "cf1_input_ids": cf1_input_ids,
+                "cf1_token_type_ids": cf1_token_type_ids,
+                "cf1_lengths": cf1_lengths,
+                "cf1_labels": cf1_labels,
+                "cf2_input_ids": cf2_input_ids,
+                "cf2_token_type_ids": cf2_token_type_ids,
+                "cf2_lengths": cf2_lengths,
+                "cf2_labels": cf2_labels,
+                "tokens": tokens,
+                "cf1_tokens": cf1_tokens,
+                "cf2_tokens": cf2_tokens,
+                "batch_id": batch_id,
+                "is_original": is_original,
+            }
+
+        else:
+            prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
+            hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
+            cf1_prem_ids, cf1_prem_lengths = pad_and_stack_ids(collated_samples["cf1_prem_ids"])
+            cf1_hyp_ids, cf1_hyp_lengths = pad_and_stack_ids(collated_samples["cf1_hyp_ids"])
+            cf2_prem_ids, cf2_prem_lengths = pad_and_stack_ids(collated_samples["cf2_prem_ids"])
+            cf2_hyp_ids, cf2_hyp_lengths = pad_and_stack_ids(collated_samples["cf2_hyp_ids"])
+
+            # stack labels
+            labels = stack_labels(collated_samples["label"])
+            cf1_labels = stack_labels(collated_samples["cf1_label"])
+            cf2_labels = stack_labels(collated_samples["cf2_label"])
+
+            # keep tokens in raw format
+            prem_tokens = collated_samples["prem"]
+            hyp_tokens = collated_samples["hyp"]
+            cf1_prem_tokens = collated_samples["cf1_prem"]
+            cf1_hyp_tokens = collated_samples["cf1_hyp"]
+            cf2_prem_tokens = collated_samples["cf2_prem"]
+            cf2_hyp_tokens = collated_samples["cf2_hyp"]
+
+            # metadata
+            batch_id = collated_samples["batch_id"]
+            is_original = collated_samples["is_original"]
+
+            # return batch to the data loader
+            batch = {
+                "prem_ids": prem_ids,
+                "hyp_ids": hyp_ids,
+                "prem_lengths": prem_lengths,
+                "hyp_lengths": hyp_lengths,
+                "labels": labels,
+                "cf1_prem_ids": cf1_prem_ids,
+                "cf1_hyp_ids": cf1_hyp_ids,
+                "cf1_prem_lengths": cf1_prem_lengths,
+                "cf1_hyp_lengths": cf1_hyp_lengths,
+                "cf1_labels": cf1_labels,
+                "cf2_prem_ids": cf2_prem_ids,
+                "cf2_hyp_ids": cf2_hyp_ids,
+                "cf2_prem_lengths": cf2_prem_lengths,
+                "cf2_hyp_lengths": cf2_hyp_lengths,
+                "cf2_labels": cf2_labels,
+                "prem_tokens": prem_tokens,
+                "hyp_tokens": hyp_tokens,
+                "cf1_prem_tokens": cf1_prem_tokens,
+                "cf1_hyp_tokens": cf1_hyp_tokens,
+                "cf2_prem_tokens": cf2_prem_tokens,
+                "cf2_hyp_tokens": cf2_hyp_tokens,
+                "batch_id": batch_id,
+                "is_original": is_original,
+            }
         return batch
 
     def prepare_data(self):
@@ -165,53 +216,121 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
 
         # map strings to ids
         def _encode(example: dict):
-            if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                example["prem_ids"] = self.tokenizer(
-                    example["prem"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["hyp_ids"] = self.tokenizer(
-                    example["hyp"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["cf1_prem_ids"] = self.tokenizer(
-                    example["cf1_prem"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["cf1_hyp_ids"] = self.tokenizer(
-                    example["cf1_hyp"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["cf2_prem_ids"] = self.tokenizer(
-                    example["cf2_prem"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
-                example["cf2_hyp_ids"] = self.tokenizer(
-                    example["cf2_hyp"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                )["input_ids"]
+            if self.concat_inputs:
+                if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                    input_enc = self.tokenizer(
+                        example["prem"].strip(), example["hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )
+                    example["input_ids"] = input_enc["input_ids"]
+                    example["token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                    input_enc = self.tokenizer(
+                        example["cf1_prem"].strip(), example["cf1_hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )
+                    example["cf1_input_ids"] = input_enc["input_ids"]
+                    example["cf1_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                    input_enc = self.tokenizer(
+                        example["cf2_prem"].strip(), example["cf2_hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )
+                    example["cf2_input_ids"] = input_enc["input_ids"]
+                    example["cf2_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                else:
+                    sep_id = self.tokenizer.token_to_index[constants.SEP]
+                    example["input_ids"] = self.tokenizer.encode(
+                        example["prem"].strip() + ' ' + constants.SEP + ' ' + example["hyp"].strip()
+                    )
+                    example["token_type_ids"] = torch.cumprod(
+                        torch.as_tensor(example["input_ids"]) != sep_id, dim=0
+                    )
+                    example["cf1_input_ids"] = self.tokenizer.encode(
+                        example["cf1_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf1_hyp"].strip()
+                    )
+                    example["cf1_token_type_ids"] = torch.cumprod(
+                        torch.as_tensor(example["cf1_input_ids"]) != sep_id, dim=0
+                    )
+                    example["cf2_input_ids"] = self.tokenizer.encode(
+                        example["cf2_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf2_hyp"].strip()
+                    )
+                    example["cf2_token_type_ids"] = torch.cumprod(
+                        torch.as_tensor(example["cf2_input_ids"]) != sep_id, dim=0
+                    )
             else:
-                example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
-                example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
-                example["cf1_prem_ids"] = self.tokenizer.encode(example["cf1_prem"].strip())
-                example["cf1_hyp_ids"] = self.tokenizer.encode(example["cf1_hyp"].strip())
-                example["cf2_prem_ids"] = self.tokenizer.encode(example["cf2_prem"].strip())
-                example["cf2_hyp_ids"] = self.tokenizer.encode(example["cf2_hyp"].strip())
+                if isinstance(self.tokenizer, PreTrainedTokenizerBase):
+                    example["prem_ids"] = self.tokenizer(
+                        example["prem"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                    example["hyp_ids"] = self.tokenizer(
+                        example["hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                    example["cf1_prem_ids"] = self.tokenizer(
+                        example["cf1_prem"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                    example["cf1_hyp_ids"] = self.tokenizer(
+                        example["cf1_hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                    example["cf2_prem_ids"] = self.tokenizer(
+                        example["cf2_prem"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                    example["cf2_hyp_ids"] = self.tokenizer(
+                        example["cf2_hyp"].strip(),
+                        padding=False,  # do not pad, padding will be done later
+                        truncation=True,  # truncate to max length accepted by the model
+                    )["input_ids"]
+                else:
+                    example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
+                    example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
+                    example["cf1_prem_ids"] = self.tokenizer.encode(example["cf1_prem"].strip())
+                    example["cf1_hyp_ids"] = self.tokenizer.encode(example["cf1_hyp"].strip())
+                    example["cf2_prem_ids"] = self.tokenizer.encode(example["cf2_prem"].strip())
+                    example["cf2_hyp_ids"] = self.tokenizer.encode(example["cf2_hyp"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
-        self.dataset.set_format(
-            type="torch",
-            columns=[
-                "prem_ids", "hyp_ids", "label",
-                "cf1_prem_ids", "cf1_hyp_ids", "cf1_label",
-                "cf2_prem_ids", "cf2_hyp_ids", "cf2_label",
-            ],
-            output_all_columns=True,
-        )
+
+        if self.concat_inputs:
+            self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+        else:
+            self.dataset = self.dataset.filter(lambda example: len(example["prem_ids"]) <= self.max_seq_len)
+            self.dataset = self.dataset.filter(lambda example: len(example["hyp_ids"]) <= self.max_seq_len)
+
+        if self.is_original is not None:
+            self.dataset = self.dataset.filter(lambda example: example["is_original"] == self.is_original)
+
+        # convert `columns` to pytorch tensors and keep un-formatted columns
+        if self.concat_inputs:
+            self.dataset.set_format(
+                type="torch",
+                columns=[
+                    "input_ids", "token_type_ids", "label",
+                    "cf1_input_ids", "cf1_token_type_ids", "cf1_label",
+                    "cf2_input_ids", "cf2_token_type_ids", "cf2_label",
+                    "batch_id", "is_original"
+                ],
+                output_all_columns=True,
+            )
+        else:
+            self.dataset.set_format(
+                type="torch",
+                columns=[
+                    "prem_ids", "hyp_ids", "label",
+                    "cf1_prem_ids", "cf1_hyp_ids", "cf1_label",
+                    "cf2_prem_ids", "cf2_hyp_ids", "cf2_label",
+                    "batch_id", "is_original"
+                ],
+                output_all_columns=True,
+            )

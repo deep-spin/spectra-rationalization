@@ -13,7 +13,6 @@ from pytorch_lightning.core.saving import load_hparams_from_tags_csv
 from pytorch_lightning.loggers import WandbLogger
 from torchnlp.encoders.text import StaticTokenizerEncoder
 from torchnlp.word_to_vector import GloVe
-from transformers import PreTrainedTokenizer
 
 from rationalizers import constants
 
@@ -336,3 +335,49 @@ def save_counterfactuals(filename, all_pieces, all_lengths):
         text = ' '.join(pieces[:leng])
         f.write(text + '\n')
     f.close()
+
+
+def concat_sequences(input_ids_1, input_ids_2, pad_token_id, bos_token_id=None):
+    """
+    Concatenates the input sequences.
+
+    Args:
+        input_ids_1: a list containing the input sequences
+        input_ids_2: a list containing the input sequences
+        pad_token_id: the id of the pad token
+        bos_token_id: the id of the beginning of sentence token
+
+    Returns:
+        input_ids: the concatenated input sequences
+        token_type_ids: the concatenated token type ids
+    """
+    # Each sequence is tokenized as:
+    # <bos> <token> <token> ... <token> <eos>
+    # So the concatenation will result in:
+    # <bos> <mt> <eos> <bos> <src> <eos> <bos> <ref> <eos> ...
+    # for some model, <bos> and <eos> might be None, so they are not concatenated.
+    input_ids = []
+    token_type_ids = []
+    for inp_1, inp_2 in zip(input_ids_1, input_ids_2):
+        unpad_inp_1 = inp_1[inp_1 != pad_token_id]
+        unpad_inp_2 = inp_2[inp_2 != pad_token_id]
+        if unpad_inp_2[0] == bos_token_id:
+            unpad_inp_2 = unpad_inp_2[1:]  # remove <bos>
+        input_ids.append(
+            torch.as_tensor(unpad_inp_1.tolist() + unpad_inp_2.tolist())
+        )
+        token_type_ids.append(
+            torch.as_tensor([0] * len(unpad_inp_1) + [1] * len(unpad_inp_2))
+        )
+    # pad the concatenated sequences
+    input_ids = torch.nn.utils.rnn.pad_sequence(
+        input_ids,
+        batch_first=True,
+        padding_value=pad_token_id
+    )
+    token_type_ids = torch.nn.utils.rnn.pad_sequence(
+        token_type_ids,
+        batch_first=True,
+        padding_value=-1
+    )
+    return input_ids, token_type_ids

@@ -33,6 +33,7 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
+        self.concat_inputs = True
 
         # objects
         self.dataset = None
