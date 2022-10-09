@@ -33,6 +33,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
         self.concat_inputs = d_params.get("concat_inputs", True)
+        self.sample_cfs = d_params.get("sample_cfs", True)
 
         # objects
         self.dataset = None
@@ -110,6 +111,17 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
             batch_id = collated_samples["batch_id"]
             is_original = collated_samples["is_original"]
 
+            # sample which counterfactual to use:
+            if self.sample_cfs:
+                use_second = torch.randint(0, 2, size=(1,))[0].item() == 0
+                if use_second:
+                    # swap cf1 and cf2
+                    cf1_input_ids, cf2_input_ids = cf2_input_ids, cf1_input_ids
+                    cf1_token_type_ids, cf2_token_type_ids = cf2_token_type_ids, cf1_token_type_ids
+                    cf1_lengths, cf2_lengths = cf2_lengths, cf1_lengths
+                    cf1_labels, cf2_labels = cf2_labels, cf1_labels
+                    cf1_tokens, cf2_tokens = cf2_tokens, cf1_tokens
+
             # return batch to the data loader
             batch = {
                 "input_ids": input_ids,
@@ -155,6 +167,19 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
             # metadata
             batch_id = collated_samples["batch_id"]
             is_original = collated_samples["is_original"]
+
+            # sample which counterfactual to use:
+            if self.sample_cfs:
+                use_second = torch.randint(0, 2, size=(1,))[0].item() == 0
+                if use_second:
+                    # swap cf1 and cf2
+                    cf1_prem_ids, cf2_prem_ids = cf2_prem_ids, cf1_prem_ids
+                    cf1_hyp_ids, cf2_hyp_ids = cf2_hyp_ids, cf1_hyp_ids
+                    cf1_prem_lengths, cf2_prem_lengths = cf2_prem_lengths, cf1_prem_lengths
+                    cf1_hyp_lengths, cf2_hyp_lengths = cf2_hyp_lengths, cf1_hyp_lengths
+                    cf1_labels, cf2_labels = cf2_labels, cf1_labels
+                    cf1_prem_tokens, cf2_prem_tokens = cf2_prem_tokens, cf1_prem_tokens
+                    cf1_hyp_tokens, cf2_hyp_tokens = cf2_hyp_tokens, cf1_hyp_tokens
 
             # return batch to the data loader
             batch = {
