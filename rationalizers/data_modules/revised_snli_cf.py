@@ -87,41 +87,24 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
         if self.concat_inputs:
             input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
             token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"], pad_id=2)
-            cf1_input_ids, cf1_lengths = pad_and_stack_ids(collated_samples["cf1_input_ids"])
-            cf1_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf1_token_type_ids"], pad_id=2)
-            cf2_input_ids, cf2_lengths = pad_and_stack_ids(collated_samples["cf2_input_ids"])
-            cf2_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf2_token_type_ids"], pad_id=2)
+            cf_input_ids, cf_lengths = pad_and_stack_ids(collated_samples["cf_input_ids"])
+            cf_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf_token_type_ids"], pad_id=2)
 
             # stack labels
             labels = stack_labels(collated_samples["label"])
-            cf1_labels = stack_labels(collated_samples["cf1_label"])
-            cf2_labels = stack_labels(collated_samples["cf2_label"])
+            cf_labels = stack_labels(collated_samples["cf_label"])
 
             # keep tokens in raw format
             prem_tokens = collated_samples["prem"]
             hyp_tokens = collated_samples["hyp"]
             tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(prem_tokens, hyp_tokens)]
-            cf1_prem_tokens = collated_samples["cf1_prem"]
-            cf1_hyp_tokens = collated_samples["cf1_hyp"]
-            cf1_tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(cf1_prem_tokens, cf1_hyp_tokens)]
-            cf2_prem_tokens = collated_samples["cf2_prem"]
-            cf2_hyp_tokens = collated_samples["cf2_hyp"]
-            cf2_tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(cf2_prem_tokens, cf2_hyp_tokens)]
+            cf_prem_tokens = collated_samples["cf_prem"]
+            cf_hyp_tokens = collated_samples["cf_hyp"]
+            cf_tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(cf_prem_tokens, cf_hyp_tokens)]
 
             # metadata
             batch_id = collated_samples["batch_id"]
             is_original = collated_samples["is_original"]
-
-            # sample which counterfactual to use:
-            if self.sample_cfs:
-                use_second = random.randint(0, 1) == 0
-                if use_second:
-                    # swap cf1 and cf2
-                    cf1_input_ids, cf2_input_ids = cf2_input_ids, cf1_input_ids
-                    cf1_token_type_ids, cf2_token_type_ids = cf2_token_type_ids, cf1_token_type_ids
-                    cf1_lengths, cf2_lengths = cf2_lengths, cf1_lengths
-                    cf1_labels, cf2_labels = cf2_labels, cf1_labels
-                    cf1_tokens, cf2_tokens = cf2_tokens, cf1_tokens
 
             # return batch to the data loader
             batch = {
@@ -129,17 +112,12 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                 "token_type_ids": token_type_ids,
                 "lengths": lengths,
                 "labels": labels,
-                "cf_input_ids": cf1_input_ids,
-                "cf_token_type_ids": cf1_token_type_ids,
-                "cf_lengths": cf1_lengths,
-                "cf_labels": cf1_labels,
-                "cf2_input_ids": cf2_input_ids,
-                "cf2_token_type_ids": cf2_token_type_ids,
-                "cf2_lengths": cf2_lengths,
-                "cf2_labels": cf2_labels,
+                "cf_input_ids": cf_input_ids,
+                "cf_token_type_ids": cf_token_type_ids,
+                "cf_lengths": cf_lengths,
+                "cf_labels": cf_labels,
                 "tokens": tokens,
-                "cf_tokens": cf1_tokens,
-                "cf2_tokens": cf2_tokens,
+                "cf_tokens": cf_tokens,
                 "batch_id": batch_id,
                 "is_original": is_original,
             }
@@ -147,40 +125,22 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
         else:
             prem_ids, prem_lengths = pad_and_stack_ids(collated_samples["prem_ids"])
             hyp_ids, hyp_lengths = pad_and_stack_ids(collated_samples["hyp_ids"])
-            cf1_prem_ids, cf1_prem_lengths = pad_and_stack_ids(collated_samples["cf1_prem_ids"])
-            cf1_hyp_ids, cf1_hyp_lengths = pad_and_stack_ids(collated_samples["cf1_hyp_ids"])
-            cf2_prem_ids, cf2_prem_lengths = pad_and_stack_ids(collated_samples["cf2_prem_ids"])
-            cf2_hyp_ids, cf2_hyp_lengths = pad_and_stack_ids(collated_samples["cf2_hyp_ids"])
+            cf_prem_ids, cf_prem_lengths = pad_and_stack_ids(collated_samples["cf_prem_ids"])
+            cf_hyp_ids, cf_hyp_lengths = pad_and_stack_ids(collated_samples["cf_hyp_ids"])
 
             # stack labels
             labels = stack_labels(collated_samples["label"])
-            cf1_labels = stack_labels(collated_samples["cf1_label"])
-            cf2_labels = stack_labels(collated_samples["cf2_label"])
+            cf_labels = stack_labels(collated_samples["cf_label"])
 
             # keep tokens in raw format
             prem_tokens = collated_samples["prem"]
             hyp_tokens = collated_samples["hyp"]
-            cf1_prem_tokens = collated_samples["cf1_prem"]
-            cf1_hyp_tokens = collated_samples["cf1_hyp"]
-            cf2_prem_tokens = collated_samples["cf2_prem"]
-            cf2_hyp_tokens = collated_samples["cf2_hyp"]
+            cf_prem_tokens = collated_samples["cf_prem"]
+            cf_hyp_tokens = collated_samples["cf_hyp"]
 
             # metadata
             batch_id = collated_samples["batch_id"]
             is_original = collated_samples["is_original"]
-
-            # sample which counterfactual to use:
-            if self.sample_cfs:
-                use_second = random.randint(0, 1) == 0
-                if use_second:
-                    # swap cf1 and cf2
-                    cf1_prem_ids, cf2_prem_ids = cf2_prem_ids, cf1_prem_ids
-                    cf1_hyp_ids, cf2_hyp_ids = cf2_hyp_ids, cf1_hyp_ids
-                    cf1_prem_lengths, cf2_prem_lengths = cf2_prem_lengths, cf1_prem_lengths
-                    cf1_hyp_lengths, cf2_hyp_lengths = cf2_hyp_lengths, cf1_hyp_lengths
-                    cf1_labels, cf2_labels = cf2_labels, cf1_labels
-                    cf1_prem_tokens, cf2_prem_tokens = cf2_prem_tokens, cf1_prem_tokens
-                    cf1_hyp_tokens, cf2_hyp_tokens = cf2_hyp_tokens, cf1_hyp_tokens
 
             # return batch to the data loader
             batch = {
@@ -189,22 +149,15 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                 "prem_lengths": prem_lengths,
                 "hyp_lengths": hyp_lengths,
                 "labels": labels,
-                "cf_prem_ids": cf1_prem_ids,
-                "cf_hyp_ids": cf1_hyp_ids,
-                "cf_prem_lengths": cf1_prem_lengths,
-                "cf_hyp_lengths": cf1_hyp_lengths,
-                "cf_labels": cf1_labels,
-                "cf2_prem_ids": cf2_prem_ids,
-                "cf2_hyp_ids": cf2_hyp_ids,
-                "cf2_prem_lengths": cf2_prem_lengths,
-                "cf2_hyp_lengths": cf2_hyp_lengths,
-                "cf2_labels": cf2_labels,
+                "cf_prem_ids": cf_prem_ids,
+                "cf_hyp_ids": cf_hyp_ids,
+                "cf_prem_lengths": cf_prem_lengths,
+                "cf_hyp_lengths": cf_hyp_lengths,
+                "cf_labels": cf_labels,
                 "prem_tokens": prem_tokens,
                 "hyp_tokens": hyp_tokens,
-                "cf_prem_tokens": cf1_prem_tokens,
-                "cf_hyp_tokens": cf1_hyp_tokens,
-                "cf2_prem_tokens": cf2_prem_tokens,
-                "cf2_hyp_tokens": cf2_hyp_tokens,
+                "cf_prem_tokens": cf_prem_tokens,
+                "cf_hyp_tokens": cf_hyp_tokens,
                 "batch_id": batch_id,
                 "is_original": is_original,
             }
@@ -227,16 +180,12 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
             tok_samples = chain(
                 self.dataset["train"]["prem"],
                 self.dataset["train"]["hyp"],
-                self.dataset["train"]["cf1_prem"],
-                self.dataset["train"]["cf1_hyp"],
-                self.dataset["train"]["cf2_prem"],
-                self.dataset["train"]["cf2_hyp"],
+                self.dataset["train"]["cf_prem"],
+                self.dataset["train"]["cf_hyp"],
                 self.dataset["validation"]["prem"],
                 self.dataset["validation"]["hyp"],
-                self.dataset["validation"]["cf1_prem"],
-                self.dataset["validation"]["cf1_hyp"],
-                self.dataset["validation"]["cf2_prem"],
-                self.dataset["validation"]["cf2_hyp"],
+                self.dataset["validation"]["cf_prem"],
+                self.dataset["validation"]["cf_hyp"],
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
@@ -252,19 +201,12 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                     example["input_ids"] = input_enc["input_ids"]
                     example["token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
                     input_enc = self.tokenizer(
-                        example["cf1_prem"].strip(), example["cf1_hyp"].strip(),
+                        example["cf_prem"].strip(), example["cf_hyp"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
-                    example["cf1_input_ids"] = input_enc["input_ids"]
-                    example["cf1_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
-                    input_enc = self.tokenizer(
-                        example["cf2_prem"].strip(), example["cf2_hyp"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )
-                    example["cf2_input_ids"] = input_enc["input_ids"]
-                    example["cf2_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                    example["cf_input_ids"] = input_enc["input_ids"]
+                    example["cf_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
                 else:
                     sep_id = self.tokenizer.token_to_index[constants.SEP]
                     example["input_ids"] = self.tokenizer.encode(
@@ -273,17 +215,11 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                     example["token_type_ids"] = torch.cumprod(
                         torch.as_tensor(example["input_ids"]) != sep_id, dim=0
                     )
-                    example["cf1_input_ids"] = self.tokenizer.encode(
-                        example["cf1_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf1_hyp"].strip()
+                    example["cf_input_ids"] = self.tokenizer.encode(
+                        example["cf_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf_hyp"].strip()
                     )
-                    example["cf1_token_type_ids"] = torch.cumprod(
-                        torch.as_tensor(example["cf1_input_ids"]) != sep_id, dim=0
-                    )
-                    example["cf2_input_ids"] = self.tokenizer.encode(
-                        example["cf2_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf2_hyp"].strip()
-                    )
-                    example["cf2_token_type_ids"] = torch.cumprod(
-                        torch.as_tensor(example["cf2_input_ids"]) != sep_id, dim=0
+                    example["cf_token_type_ids"] = torch.cumprod(
+                        torch.as_tensor(example["cf_input_ids"]) != sep_id, dim=0
                     )
             else:
                 if isinstance(self.tokenizer, PreTrainedTokenizerBase):
@@ -297,33 +233,21 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )["input_ids"]
-                    example["cf1_prem_ids"] = self.tokenizer(
-                        example["cf1_prem"].strip(),
+                    example["cf_prem_ids"] = self.tokenizer(
+                        example["cf_prem"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )["input_ids"]
-                    example["cf1_hyp_ids"] = self.tokenizer(
-                        example["cf1_hyp"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )["input_ids"]
-                    example["cf2_prem_ids"] = self.tokenizer(
-                        example["cf2_prem"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )["input_ids"]
-                    example["cf2_hyp_ids"] = self.tokenizer(
-                        example["cf2_hyp"].strip(),
+                    example["cf_hyp_ids"] = self.tokenizer(
+                        example["cf_hyp"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )["input_ids"]
                 else:
                     example["prem_ids"] = self.tokenizer.encode(example["prem"].strip())
                     example["hyp_ids"] = self.tokenizer.encode(example["hyp"].strip())
-                    example["cf1_prem_ids"] = self.tokenizer.encode(example["cf1_prem"].strip())
-                    example["cf1_hyp_ids"] = self.tokenizer.encode(example["cf1_hyp"].strip())
-                    example["cf2_prem_ids"] = self.tokenizer.encode(example["cf2_prem"].strip())
-                    example["cf2_hyp_ids"] = self.tokenizer.encode(example["cf2_hyp"].strip())
+                    example["cf_prem_ids"] = self.tokenizer.encode(example["cf_prem"].strip())
+                    example["cf_hyp_ids"] = self.tokenizer.encode(example["cf_hyp"].strip())
             return example
 
         self.dataset = self.dataset.map(_encode)
@@ -343,8 +267,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                 type="torch",
                 columns=[
                     "input_ids", "token_type_ids", "label",
-                    "cf1_input_ids", "cf1_token_type_ids", "cf1_label",
-                    "cf2_input_ids", "cf2_token_type_ids", "cf2_label",
+                    "cf_input_ids", "cf_token_type_ids", "cf_label",
                     "batch_id", "is_original"
                 ],
                 output_all_columns=True,
@@ -354,8 +277,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                 type="torch",
                 columns=[
                     "prem_ids", "hyp_ids", "label",
-                    "cf1_prem_ids", "cf1_hyp_ids", "cf1_label",
-                    "cf2_prem_ids", "cf2_hyp_ids", "cf2_label",
+                    "cf_prem_ids", "cf_hyp_ids", "cf_label",
                     "batch_id", "is_original"
                 ],
                 output_all_columns=True,

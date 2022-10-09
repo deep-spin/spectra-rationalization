@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import os
 import datasets
 import pandas as pd
+import random
 
 
 _CITATION = """\
@@ -103,12 +104,31 @@ class RevisedSNLIDataset(datasets.GeneratorBasedBuilder):
 
     def _generate_examples(self, filepath, split):
         """Yields examples."""
-        df = pd.read_csv(filepath, delimiter='\t')
-        for i, row in df.iterrows():
-            yield i, {
-                "prem": row['sentence1'],
-                "hyp": row['sentence2'],
-                "label": row['gold_label'],
-                "batch_id": row['batch_id'],
-                "is_original": row['is_original'] == 1,
+
+        def get_data(sub_g, prefix='', idx=0):
+            return {
+                prefix + "prem": sub_g['sentence1'].iloc[idx],
+                prefix + "hyp": sub_g['sentence2'].iloc[idx],
+                prefix + "label": sub_g['gold_label'].iloc[idx],
+                prefix + "batch_id": sub_g['batch_id'].iloc[idx],
+                prefix + "is_original": sub_g['is_original'].iloc[idx]
             }
+
+        df = pd.read_csv(filepath, delimiter='\t')
+        i = 0
+        for (_, g) in df.groupby('batch_id'):
+            d_orig = get_data(g, prefix='', idx=0)
+            if self.config.side == 'premise':
+                # select edited premises as counterfactuals
+                sub_g = g[g['sentence1'] != g.iloc[0]['sentence1']]
+            else:
+                # select edited hypotheses as counterfactuals
+                sub_g = g[g['sentence2'] != g.iloc[0]['sentence2']]
+            # some samples have a single or no counterfactual for a specified side
+            d_cf1 = None if len(sub_g) < 1 else get_data(sub_g, prefix='', idx=0)
+            d_cf2 = None if len(sub_g) < 2 else get_data(sub_g, prefix='', idx=1)
+            for row in [d_orig, d_cf1, d_cf2]:
+                if row is None:
+                    continue
+                i += 1
+                yield i - 1, row

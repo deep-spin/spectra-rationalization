@@ -34,16 +34,11 @@ class CountefactualRevisedSNLIDataset(datasets.GeneratorBasedBuilder):
                     "label": datasets.ClassLabel(names=["entailment", "neutral", "contradiction"]),
                     "batch_id": datasets.Value("int32"),
                     "is_original": datasets.Value("bool"),
-                    "cf1_prem": datasets.Value("string"),
-                    "cf1_hyp": datasets.Value("string"),
-                    "cf1_label": datasets.ClassLabel(names=["entailment", "neutral", "contradiction"]),
-                    "cf1_batch_id": datasets.Value("int32"),
-                    "cf1_is_original": datasets.Value("bool"),
-                    "cf2_prem": datasets.Value("string"),
-                    "cf2_hyp": datasets.Value("string"),
-                    "cf2_label": datasets.ClassLabel(names=["entailment", "neutral", "contradiction"]),
-                    "cf2_batch_id": datasets.Value("int32"),
-                    "cf2_is_original": datasets.Value("bool")
+                    "cf_prem": datasets.Value("string"),
+                    "cf_hyp": datasets.Value("string"),
+                    "cf_label": datasets.ClassLabel(names=["entailment", "neutral", "contradiction"]),
+                    "cf_batch_id": datasets.Value("int32"),
+                    "cf_is_original": datasets.Value("bool"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -90,7 +85,8 @@ class CountefactualRevisedSNLIDataset(datasets.GeneratorBasedBuilder):
                 prefix+"is_original": sub_g['is_original'].iloc[idx]
             }
         df = pd.read_csv(filepath, delimiter='\t')
-        for i, (_, g) in enumerate(df.groupby('batch_id')):
+        i = 0
+        for (_, g) in df.groupby('batch_id'):
             d_orig = get_data(g, prefix='', idx=0)
             if self.config.side == 'premise':
                 # select edited premises as counterfactuals
@@ -98,9 +94,11 @@ class CountefactualRevisedSNLIDataset(datasets.GeneratorBasedBuilder):
             else:
                 # select edited hypotheses as counterfactuals
                 sub_g = g[g['sentence2'] != g.iloc[0]['sentence2']]
-            # some samples have a single or no counterfactual for a specified side, so we ignore them
-            if len(sub_g) < 2:
-                continue
-            d_cf1 = get_data(sub_g, prefix='cf1_', idx=0)
-            d_cf2 = get_data(sub_g, prefix='cf2_', idx=1)
-            yield i, {**d_orig, **d_cf1, **d_cf2}
+            # some samples have a single or no counterfactual for a specified side
+            d_cf1 = {} if len(sub_g) < 1 else get_data(sub_g, prefix='cf_', idx=0)
+            d_cf2 = {} if len(sub_g) < 2 else get_data(sub_g, prefix='cf_', idx=1)
+            for d_o, d_c in [(d_orig, d_cf1), (d_orig, d_cf2)]:
+                if len(d_c) == 0:
+                    continue
+                i += 1
+                yield i - 1, {**d_o, **d_c}
