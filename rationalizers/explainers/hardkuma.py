@@ -11,6 +11,7 @@ class HardKumaExplainer(BaseExplainer):
         budget: int = 10,
         contiguous: bool = False,
         topk: bool = False,
+        temperature: float = 1.0,
     ):
 
         super().__init__()
@@ -18,6 +19,7 @@ class HardKumaExplainer(BaseExplainer):
         self.topk = topk
         self.contiguous = contiguous
         self.budget = budget
+        self.temperature = temperature
         self.z_layer = KumaGate(enc_size)
 
     def forward(self, h, mask=None, **kwargs):
@@ -27,7 +29,7 @@ class HardKumaExplainer(BaseExplainer):
 
         # encode sentence
         lengths = mask.sum(1)
-        z_dist = self.z_layer(h / 0.01)
+        z_dist = self.z_layer(h / self.temperature)
 
         # we sample once since the state was already repeated num_samples
         if self.training:

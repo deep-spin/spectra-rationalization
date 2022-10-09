@@ -35,6 +35,7 @@ class TransformerHardKumaRationalizer(TransformerBaseRationalizer):
         self.explainer = explainer_cls(
             h_params,
             enc_size=self.ff_gen_hidden_size,
+            temperature=h_params.get('temperature', 1.0),
         )
 
     def get_factual_loss(self, y_hat, y, z, mask, prefix):
@@ -94,17 +95,21 @@ class TransformerHardKumaRationalizer(TransformerBaseRationalizer):
         # lagrange dissatisfaction, batch average of the constraint
         c0_hat = l0 - self.sparsity_penalty
 
-        # moving average of the constraint
-        self.c0_ma = self.alpha * self.c0_ma + (1 - self.alpha) * c0_hat.item()
+        use_original_implementation = False
+        if use_original_implementation:
+            # moving average of the constraint
+            self.c0_ma = self.alpha * self.c0_ma + (1 - self.alpha) * c0_hat.item()
 
-        # compute smoothed constraint (equals moving average c0_ma)
-        c0 = c0_hat + (self.c0_ma.detach() - c0_hat.detach())
+            # compute smoothed constraint (equals moving average c0_ma)
+            c0 = c0_hat + (self.c0_ma.detach() - c0_hat.detach())
 
-        # update lambda
-        self.lambda0 = self.lambda0 * torch.exp(self.lagrange_lr * c0.detach())
-        self.lambda0 = self.lambda0.clamp(self.lambda_min, self.lambda_max)
+            # update lambda
+            self.lambda0 = self.lambda0 * torch.exp(self.lagrange_lr * c0.detach())
+            self.lambda0 = self.lambda0.clamp(self.lambda_min, self.lambda_max)
 
-        main_loss = loss + self.lambda0.detach() * c0
+            main_loss = loss + self.lambda0.detach() * c0
+        else:
+            main_loss = loss + self.lambda0.detach() * c0_hat
 
         # lagrange coherence dissatisfaction (batch average)
         if self.contiguity_penalty != 0:
