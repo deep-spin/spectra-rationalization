@@ -4,6 +4,7 @@ from itertools import chain
 import datasets as hf_datasets
 import nltk
 import torch
+import random
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
 from transformers import PreTrainedTokenizerBase
@@ -113,7 +114,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
 
             # sample which counterfactual to use:
             if self.sample_cfs:
-                use_second = torch.randint(0, 2, size=(1,))[0].item() == 0
+                use_second = random.randint(0, 1) == 0
                 if use_second:
                     # swap cf1 and cf2
                     cf1_input_ids, cf2_input_ids = cf2_input_ids, cf1_input_ids
@@ -170,7 +171,7 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
 
             # sample which counterfactual to use:
             if self.sample_cfs:
-                use_second = torch.randint(0, 2, size=(1,))[0].item() == 0
+                use_second = random.randint(0, 1) == 0
                 if use_second:
                     # swap cf1 and cf2
                     cf1_prem_ids, cf2_prem_ids = cf2_prem_ids, cf1_prem_ids
