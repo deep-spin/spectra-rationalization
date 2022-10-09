@@ -8,12 +8,13 @@ shell_logger = logging.getLogger(__name__)
 
 class TransformerBaselineClassifier(TransformerBaseRationalizer):
 
-    def get_factual_flow(self, x, mask=None, z=None):
+    def get_factual_flow(self, x, mask=None, expl_mask=None, z=None):
         """
         Compute the factual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T] (default None)
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
@@ -36,7 +37,8 @@ class TransformerBaselineClassifier(TransformerBaseRationalizer):
         gen_h = gen_h.last_hidden_state
 
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        z, _ = self.explainer(gen_h, mask)
+        e_mask = mask & expl_mask if expl_mask is not None else mask
+        z, _ = self.explainer(gen_h, e_mask)
         summary = masked_average(gen_h, z)
         y_hat = self.ff_output_layer(summary)
         return z, y_hat
