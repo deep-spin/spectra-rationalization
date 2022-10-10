@@ -87,7 +87,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
         self.cf_task_for_mice = h_params.get("cf_task_for_mice", "imdb")
         self.cf_manual_sample = h_params.get("cf_manual_sample", True)
-        self.cf_supervision = h_params.get("cf_supervision", False)
+        self.cf_supervision = h_params.get("cf_supervision", None)
 
         # explainer:
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -163,6 +163,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.rf_mean_baseline = 0
         self.cf_x_tilde = None
         self.cf_log_prob_x_tilde = None
+        # for supervised sentence-similarity loss
+        self.cf_emb = None
+        self.cf_emb_tilde = None
 
         # counterfactual generator module
         if 't5' in self.cf_gen_arch:
@@ -358,8 +361,18 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
+        # fix inputs for supervision-style training
+        if self.cf_supervision:
+            raise NotImplementedError
+            # todo: handle the seq2seq case
+            x_cf = x.clone()
+            mask_cf = mask.clone() if mask is not None else None
+            token_type_ids_cf = token_type_ids.clone() if token_type_ids is not None else None
+
         # factual flow
-        z, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
+        z, y_hat = self.get_factual_flow(
+            x, mask=mask, token_type_ids=token_type_ids
+        )
 
         # prepend label for mice supervision-mode
         if 'mice' in self.cf_gen_arch and self.cf_prepend_label_for_mice:
@@ -381,6 +394,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :param from_cf: bool, whether the input is from the counterfactual flow (default False)
         :return: z, y_hat
@@ -632,7 +646,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         return x_tilde, z_tilde, mask_tilde, token_type_ids_tilde
 
-    def _sample_from_lm(self, x, h_tilde, z_mask, mask, encoder_outputs=None):
+    def _sample_from_lm(self, x, h_tilde, z_mask, mask, encoder_outputs=None, x_cf=None):
         if self.cf_use_reinforce:
             if 't5' in self.cf_gen_arch:
                 # recover hidden states from the encoder (.generate() changes the hidden states)
@@ -648,28 +662,44 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                     num_sentinels = (z_mask > 0).long().sum(-1).min().item()
                     gen_kwargs['min_length'] = min(gen_kwargs['max_length'], num_sentinels * 2)
 
-                # sample autoregressively
-                gen_out = self.cf_gen_hf.generate(
-                    encoder_outputs=encoder_outputs,
-                    attention_mask=mask.long(),
-                    return_dict_in_generate=True,
-                    **gen_kwargs
-                )
-                # clear memory because generation is done
-                # torch.cuda.empty_cache()
+                if 'seq2seq' in self.cf_supervision:
+                    bos_tensor = self.tokenizer.bos_token_id * torch.ones_like(x_cf[:, :1])
+                    x_tilde = torch.cat([bos_tensor, x_cf[:, :-1]], dim=-1)
+                    cf_gen_dec_out = self.cf_gen_decoder(
+                        input_ids=x_tilde,
+                        attention_mask=(x_tilde != constants.PAD_ID).long(),
+                        encoder_hidden_states=encoder_hidden_states
+                    )
+                    logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)
 
-                # idk why but t5 generates a pad symbol as the first token
-                # so we cut it out for all samples in the batch
-                # (this happens only for .sequences)
-                x_tilde = gen_out.sequences[:, 1:]
+                else:
+                    # sample autoregressively
+                    gen_out = self.cf_gen_hf.generate(
+                        encoder_outputs=encoder_outputs,
+                        attention_mask=mask.long(),
+                        return_dict_in_generate=True,
+                        output_scores=True,
+                        **gen_kwargs
+                    )
+                    # clear memory because generation is done
+                    # torch.cuda.empty_cache()
 
-                # get the logits for x_tilde
-                cf_gen_dec_out = self.cf_gen_decoder(
-                    input_ids=gen_out.sequences,
-                    attention_mask=(gen_out.sequences != constants.PAD_ID).long(),
-                    encoder_hidden_states=encoder_hidden_states
-                )
-                logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)[:, :-1]
+                    # idk why but t5 generates a pad symbol as the first token
+                    # so we cut it out for all samples in the batch
+                    # (this happens only for .sequences)
+                    x_tilde = gen_out.sequences[:, 1:]
+
+                    # check forward and backward values match
+                    import ipdb; ipdb.set_trace()
+                    logits = gen_out.scores
+
+                    # get the logits for x_tilde
+                    cf_gen_dec_out = self.cf_gen_decoder(
+                        input_ids=gen_out.sequences,
+                        attention_mask=(gen_out.sequences != constants.PAD_ID).long(),
+                        encoder_hidden_states=encoder_hidden_states
+                    )
+                    logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)[:, :-1]
 
             else:
                 # sample directly from the output layer
@@ -743,7 +773,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         return loss, stats
 
-    def get_counterfactual_loss(self, y_hat, y, z_tilde, mask_tilde, prefix):
+    def get_counterfactual_loss(self, y_hat, y, z_tilde, mask_tilde, prefix, x_tilde=None, x_cf=None):
         """
         Compute loss for the counterfactual flow.
 
@@ -752,17 +782,26 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param z_tilde: latent selection vector. torch.FloatTensor of shape [B, T]
         :param mask_tilde: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param prefix: prefix for loss statistics (train, val, test)
+        :param x_tilde: generated counterfactual input ids tensor.
+                        torch.LongTensor of shape [B, T] for reinforce sampling
+                        torch.LongTensor of shape [B, T, V] for gumbel-softmax sampling
+        :param x_cf: gold counterfactual input ids tensor. torch.LongTensor of shape [B, T]
         :return: tuple containing:
             `loss cost (torch.FloatTensor)`: the result of the loss function
             `loss stats (dict): dict with loss statistics
         """
+        def get_x_emb(x):
+            # simple function that recovers the embeddings of given ids
+            if x.dim() == 2:
+                # receive input ids
+                return self.cf_gen_emb_layer(x)
+            else:
+                # receive one-hot vectors
+                inputs_embeds = x @ self.cf_gen_emb_layer.word_embeddings.weight
+                return self.cf_gen_emb_layer(inputs_embeds=inputs_embeds)
+
         stats = {}
         loss_vec = self.cf_criterion(y_hat, y)  # [B] or [B,C]
-
-        # compute loss with:
-        # x = h
-        # y = y_tilde
-        # z = x_tilde
 
         # main MSE loss for p(y | x, z)
         # masked average
@@ -775,8 +814,52 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         stats["cf_mse" if not self.is_multilabel else "cf_criterion"] = loss.item()
         main_loss = loss
 
-        # recover the probabilities of x_tilde
-        if self.cf_supervision or self.cf_use_reinforce:
+        # ideas for later (penalties):
+        # use an "adaptor" layer which is a pretrained LM, such that new logits ~= adaptor logits
+        # logits = alpha * self.adaptor_logits(x) + (1 - alpha) * self.cf_flow_logits(x)
+
+        # supervise logp_xtilde
+        penalty = 0
+        if 'seq2seq' in self.cf_supervision:
+            # we need to use T5 here, there is no way to do this with an encoder-only model
+            # approximate original distribution with the new distribution
+            # penalty += - torch.nn.functional.kl_divergence(original_bert_dist, torch.exp(logp_xtilde))
+            lm_logits = self.cf_log_prob_x_tilde.view(-1, self.cf_log_prob_x_tilde.size(-1))
+            lm_labels = x_cf.view(-1,)
+            lm_labels = lm_labels.masked_fill(lm_labels == self.pad_token_id, -100)
+            cost = torch.nn.functional.nll_loss(lm_logits, lm_labels)
+            penalty += self.penalty_seq2seq * cost.mean()
+
+        if 'similarity' in self.cf_supervision:
+            # maximize similarity between emb(x_cf) and emb(x_tilde)
+            x_cf_emb = get_x_emb(x_cf).mean(1)
+            x_tilde_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
+            x_tilde_emb = get_x_emb(x_tilde_ids).mean(1)
+            cost = 1 - torch.nn.functional.cosine_similarity(x_cf_emb, x_tilde_emb, dim=-1)
+            penalty += self.penalty_similarity * cost.mean()
+
+        if 'diversity' in self.cf_supervision:
+            # maximize diversity of several sampled x_tildes
+            # penalty += det(1 / 1 + dist(x_tilde_i, x_tilde_j))
+            assert isinstance(x_tilde, (list, tuple))
+            gen_ids = [x if x.dim() == 2 else x.argmax(dim=-1) for x in x_tilde]
+            gen_embs = torch.stack([get_x_emb(x).mean(1) for x in gen_ids])
+            gen_embs_sq = gen_embs.transpose(0, 1) ** 2
+            dist_matrix = torch.sqrt(gen_embs_sq @ gen_embs_sq.transpose(-1, -2))
+            cost = torch.linalg.det(1 / (1 + dist_matrix))
+            penalty += self.penalty_diversity * cost.mean()
+
+        if 'fluency' in self.cf_supervision:
+            # maximize the fluency of x_cf_tilde
+            # lm = https://huggingface.co/distilgpt2
+            # penalty += neg_perplexity_pretrained_lm(x_tilde)
+            x_tilde_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
+            labels = x_tilde_ids.roll(1, dims=-1)
+            cost = self.lm_model(input_ids=x_tilde_ids, labels=labels)[0]
+            penalty += self.penalty_fluency * cost.mean()
+
+        # unsupervised setting, use reinforce or gumbel-softmax (default)
+        if self.cf_use_reinforce:
             # for BERT:
             # the <mask> is on <mask> table
             # the book   is on the    table
@@ -800,6 +883,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             # P(gen_id_i | gen_id_{0:i-1}, s)
             # p = cumprod(p)
 
+            # recover the probabilities of x_tilde with opt 1.
             # log P(x_tilde | s; phi)
             if 't5' in self.cf_gen_arch:
                 # x:        the           <input_id_0> is on the <input_id_1>
@@ -826,12 +910,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 # weighted average (ignore sentinels and pad)
                 log_xtilde_scalar = (logp_xtilde * gen_mask.float()).sum(1) / gen_mask.float().sum(1)
 
-        # supervise logp_xtilde
-        if self.cf_supervision:
-            # we need to use T5 here, there is no way to do this with an encoder-only model
-            raise NotImplementedError
-
-        if self.cf_use_reinforce:
             # compute generator loss
             cost_vec = loss_vec.detach()
             # cost_vec is neg reward
@@ -859,23 +937,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             stats["cf_cost_p"] = loss.item()
 
             main_loss = loss + cost_logpz
-
-        # ideas for later (penalties):
-        # use an "adaptor" layer which is a pretrained LM, such that new logits ~= adaptor logits
-        # logits = alpha * self.adaptor_logits(x) + (1 - alpha) * self.cf_flow_logits(x)
-
-        # approximate original distribution with the new distribution
-        # penalty += - torch.nn.functional.kl_divergence(original_bert_dist, torch.softmax(logits))
-
-        # use a fluency loss:
-        # lm = https://huggingface.co/distilgpt2
-        # penalty += perplexity_pretrained_lm(x_tilde)
-
-        # use similarity loss:
-        # penalty += similarity_with_original(x_tilde_emb_i, x_emb) for i in range(K)
-
-        # use a diversity loss:
-        # penalty += det(1 / 1 + sim(x_tilde_i, x_tilde_j))
 
         # latent selection stats
         num_0, num_c, num_1, total = get_z_stats(z_tilde, mask_tilde)
@@ -1004,6 +1065,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # get counterfactuals
         gen_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
         if 't5' not in self.cf_gen_arch:
+            import ipdb; ipdb.set_trace()
             z_1 = (z_tilde > 0).long()
             gen_ids = z_1 * gen_ids + (1 - z_1) * cf_input_ids
         cfs = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
