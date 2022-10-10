@@ -52,6 +52,7 @@ train:
     explainer: 'sparsemap'
     explainer_pre_mlp: True
     explainer_requires_grad: True
+    explainer_mask_token_type_id: 0
     sparsemap_budget: 10
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001

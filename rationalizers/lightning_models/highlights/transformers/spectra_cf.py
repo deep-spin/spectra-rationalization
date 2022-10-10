@@ -92,6 +92,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # explainer:
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
+        self.explainer_mask_token_type_id = h_params.get("explainer_mask_token_type_id", None)
         self.temperature = h_params.get("temperature", 1.0)
 
         # both
@@ -341,8 +342,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         x_cf: torch.LongTensor = None,
         mask: torch.BoolTensor = None,
         mask_cf: torch.BoolTensor = None,
-        expl_mask: torch.BoolTensor = None,
-        expl_mask_cf: torch.BoolTensor = None,
+        token_type_ids: torch.BoolTensor = None,
+        token_type_ids_cf: torch.BoolTensor = None,
         current_epoch=None,
     ):
         """
@@ -352,13 +353,13 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param x_cf: counterfactual input ids tensor. torch.LongTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param mask_cf: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
-        :param expl_mask_cf: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids_cf: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
         # factual flow
-        z, y_hat = self.get_factual_flow(x, mask=mask, expl_mask=expl_mask)
+        z, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
 
         # prepend label for mice supervision-mode
         if 'mice' in self.cf_gen_arch and self.cf_prepend_label_for_mice:
@@ -368,13 +369,13 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # counterfactual flow
         x_tilde, z_tilde, mask_tilde, y_tilde_hat = self.get_counterfactual_flow(
-            x_cf, z, mask=mask_cf, expl_mask=expl_mask_cf
+            x_cf, z, mask=mask_cf, token_type_ids=token_type_ids_cf
         )
 
         # return everything as output (useful for computing the loss)
         return (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
 
-    def get_factual_flow(self, x, mask=None, expl_mask=None, z=None, from_cf=False):
+    def get_factual_flow(self, x, mask=None, token_type_ids=None, z=None, from_cf=False):
         """
         Compute the factual flow.
 
@@ -420,8 +421,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         gen_h = gen_h.last_hidden_state
 
         # pass through the explainer
+        if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
+            # focus only on the explanation positions of the first concatenated input
+            e_mask = mask & (token_type_ids == self.explainer_mask_token_type_id)
+        else:
+            e_mask = mask
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        e_mask = mask & expl_mask if expl_mask is not None else mask
         z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
         z_mask = (z * e_mask.float()).unsqueeze(-1)
 
@@ -504,19 +509,19 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         return z, y_hat
 
-    def get_counterfactual_flow(self, x, z, mask=None, expl_mask=None):
+    def get_counterfactual_flow(self, x, z, mask=None, token_type_ids=None):
         """
         Compute the counterfactual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param z: binary variables tensor. torch.FloatTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :return: (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
         if self.cf_manual_sample:
             # reuse the factual flow to get a prediction for the counterfactual flow
-            z_tilde, y_tilde_hat = self.get_factual_flow(x, mask=mask, expl_mask=expl_mask, from_cf=True)
+            z_tilde, y_tilde_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids, from_cf=True)
             return x, z_tilde, mask, y_tilde_hat
 
         # prepare input for the generator LM
@@ -558,18 +563,18 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         x_tilde, logits = self._sample_from_lm(x, h_tilde, z_mask, mask, encoder_outputs=cf_gen_enc_out)
 
         # expand z to account for the new generated tokens (important for t5)
-        x_tilde, z_tilde, mask_tilde, expl_mask_tilde = self._expand_factual_inputs_from_x_tilde(
-            x, z, mask, x_tilde, expl_mask=expl_mask
+        x_tilde, z_tilde, mask_tilde, token_type_ids_tilde = self._expand_factual_inputs_from_x_tilde(
+            x, z, mask, x_tilde, token_type_ids=token_type_ids
         )
 
         # reuse the factual flow to get a prediction for the counterfactual flow
         z_tilde, y_tilde_hat = self.get_factual_flow(
-            x_tilde, mask=mask_tilde, expl_mask=expl_mask_tilde, from_cf=True
+            x_tilde, mask=mask_tilde, token_type_ids=token_type_ids_tilde, from_cf=True
         )
 
         return x_tilde, z_tilde, mask_tilde, y_tilde_hat
 
-    def _expand_factual_inputs_from_x_tilde(self, x, z, mask, x_tilde, expl_mask=None):
+    def _expand_factual_inputs_from_x_tilde(self, x, z, mask, x_tilde, token_type_ids=None):
         if 't5' in self.cf_gen_arch:
             # get the counts needed to expand the input_ids into generated_ids
             gen_counts = get_new_frequencies_of_gen_ids_from_t5(
@@ -584,10 +589,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             x_rep = repeat_interleave_and_pad(x, gen_counts, pad_id=constants.PAD_ID)
             z_tilde = repeat_interleave_and_pad(z, gen_counts, pad_id=constants.PAD_ID)
             mask_tilde = repeat_interleave_and_pad(mask, gen_counts, pad_id=constants.PAD_ID)
-            if expl_mask is not None:
-                expl_mask_tilde = repeat_interleave_and_pad(expl_mask, gen_counts, pad_id=constants.PAD_ID)
+            if token_type_ids is not None:
+                token_type_ids_tilde = repeat_interleave_and_pad(token_type_ids, gen_counts, pad_id=constants.PAD_ID)
             else:
-                expl_mask_tilde = None
+                token_type_ids_tilde = None
             # expand x_tilde according to inp_counts
             x_tilde_rep = repeat_interleave_and_pad(x_tilde, inp_counts)
 
@@ -600,8 +605,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             if original_seq_len > expanded_seq_len:
                 z_tilde = z_tilde[:, :expanded_seq_len]
                 mask_tilde = mask_tilde[:, :expanded_seq_len]
-                if expl_mask_tilde is not None:
-                    expl_mask_tilde = expl_mask_tilde[:, :expanded_seq_len]
+                if token_type_ids_tilde is not None:
+                    token_type_ids_tilde = token_type_ids_tilde[:, :expanded_seq_len]
 
             # remove labels in case they were prepended for mice t5
             # (the prepended prompt has 6 tokens)
@@ -609,23 +614,23 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 x_tilde = x_tilde[:, 6:]
                 z_tilde = z_tilde[:, 6:]
                 mask_tilde = mask_tilde[:, 6:]
-                if expl_mask_tilde is not None:
-                    expl_mask_tilde = expl_mask_tilde[:, 6:]
+                if token_type_ids_tilde is not None:
+                    token_type_ids_tilde = token_type_ids_tilde[:, 6:]
 
             # if we generated too much, there isn't much we can do besides truncating
             if x_tilde.shape[-1] > 512 and 'bert' in self.cf_pred_arch:
                 x_tilde = x_tilde[:, :512]
                 z_tilde = z_tilde[:, :512]
                 mask_tilde = mask_tilde[:, :512]
-                if expl_mask_tilde is not None:
-                    expl_mask_tilde = expl_mask_tilde[:, :512]
+                if token_type_ids_tilde is not None:
+                    token_type_ids_tilde = token_type_ids_tilde[:, :512]
 
         else:  # otherwise our dimensions match, so we can reuse the same z and mask
             z_tilde = z
             mask_tilde = mask
-            expl_mask_tilde = expl_mask
+            token_type_ids_tilde = token_type_ids
 
-        return x_tilde, z_tilde, mask_tilde, expl_mask_tilde
+        return x_tilde, z_tilde, mask_tilde, token_type_ids_tilde
 
     def _sample_from_lm(self, x, h_tilde, z_mask, mask, encoder_outputs=None):
         if self.cf_use_reinforce:
@@ -900,12 +905,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
         cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
-        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
-        cf_expl_mask = batch["cf_token_type_ids"] == 0 if "cf_token_type_ids" in batch else None
+        token_type_ids = batch.get("token_type_ids", None)
+        cf_token_type_ids = batch.get("cf_token_type_ids", None)
         prefix = "train"
 
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, expl_mask, cf_expl_mask, current_epoch=self.current_epoch
+            input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids, current_epoch=self.current_epoch
         )
 
         # compute factual loss
@@ -963,12 +968,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_input_ids = batch["cf_input_ids"] if "cf_input_ids" in batch else input_ids
         cf_mask = cf_input_ids != constants.PAD_ID
         cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
-        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
-        cf_expl_mask = batch["cf_token_type_ids"] == 0 if "cf_token_type_ids" in batch else None
+        token_type_ids = batch.get("token_type_ids", None)
+        cf_token_type_ids = batch.get("cf_token_type_ids", None)
 
         # forward-pass
         (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, expl_mask, cf_expl_mask, current_epoch=self.current_epoch
+            input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids, current_epoch=self.current_epoch
         )
 
         # compute factual loss
@@ -1101,10 +1106,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # log metrics
         dict_metrics = {
-            f"avg_{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ff_sum_loss"]),
-            f"avg_{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ff_ps"]),
-            f"avg_{prefix}_cf_sum_loss": np.mean(stacked_outputs[f"{prefix}_cf_sum_loss"]),
-            f"avg_{prefix}_cf_ps": np.mean(stacked_outputs[f"{prefix}_cf_ps"]),
+            f"{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ff_ps"]),
+            f"{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_ff_sum_loss"]),
+            f"{prefix}_cf_ps": np.mean(stacked_outputs[f"{prefix}_cf_ps"]),
+            f"{prefix}_cf_sum_loss": np.mean(stacked_outputs[f"{prefix}_cf_sum_loss"]),
         }
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)

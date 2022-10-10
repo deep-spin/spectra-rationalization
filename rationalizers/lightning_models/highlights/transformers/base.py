@@ -69,6 +69,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self.explainer_activation = h_params.get("explainer_activation", "sparsemax")
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
         self.explainer_requires_grad = h_params.get("explainer_requires_grad", True)
+        self.explainer_mask_token_type_id = h_params.get("explainer_mask_token_type_id", None)
         self.temperature = h_params.get("temperature", 1.0)
 
         ########################
@@ -226,7 +227,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self,
         x: torch.LongTensor,
         mask: torch.BoolTensor = None,
-        expl_mask: torch.BoolTensor = None,
+        token_type_ids: torch.BoolTensor = None,
         current_epoch=None,
     ):
         """
@@ -234,22 +235,22 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
         # factual flow
-        z, y_hat = self.get_factual_flow(x, mask=mask, expl_mask=expl_mask)
+        z, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
         # return everything as output (useful for computing the loss)
         return z, y_hat
 
-    def get_factual_flow(self, x, mask=None, expl_mask=None, z=None):
+    def get_factual_flow(self, x, mask=None, token_type_ids=None, z=None):
         """
         Compute the factual flow.
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T] or input vectors of shape [B, T, |V|]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :param expl_mask: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
@@ -283,8 +284,12 @@ class TransformerBaseRationalizer(BaseRationalizer):
         gen_h = gen_h.last_hidden_state
 
         # pass through the explainer
+        if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
+            # focus only on the explanation positions of the first concatenated input
+            e_mask = mask & (token_type_ids == self.explainer_mask_token_type_id)
+        else:
+            e_mask = mask
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
-        e_mask = mask & expl_mask if expl_mask is not None else mask
         z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
         z_mask = (z * e_mask.float()).unsqueeze(-1)
         self.ff_z = z
@@ -406,10 +411,10 @@ class TransformerBaseRationalizer(BaseRationalizer):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
         labels = batch["labels"]
-        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
+        token_type_ids = batch.get("token_type_ids", None)
         prefix = "train"
 
-        z, y_hat = self(input_ids, mask, expl_mask=expl_mask, current_epoch=self.current_epoch)
+        z, y_hat = self(input_ids, mask, token_type_ids=token_type_ids, current_epoch=self.current_epoch)
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
@@ -443,11 +448,11 @@ class TransformerBaseRationalizer(BaseRationalizer):
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
         input_ids = batch["input_ids"]
         mask = input_ids != constants.PAD_ID
-        expl_mask = batch["token_type_ids"] == 0 if "token_type_ids" in batch else None
+        token_type_ids = batch.get("token_type_ids", None)
         labels = batch["labels"]
 
         # forward-pass
-        z, y_hat = self(input_ids, mask, expl_mask=expl_mask, current_epoch=self.current_epoch)
+        z, y_hat = self(input_ids, mask, token_type_ids=token_type_ids, current_epoch=self.current_epoch)
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
