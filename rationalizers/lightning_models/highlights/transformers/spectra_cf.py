@@ -88,6 +88,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.cf_task_for_mice = h_params.get("cf_task_for_mice", "imdb")
         self.cf_manual_sample = h_params.get("cf_manual_sample", True)
         self.cf_supervision = h_params.get("cf_supervision", None)
+        self.penalty_seq2seq = h_params.get('penalty_seq2seq', 1.0)
+        self.penalty_similarity = h_params.get('penalty_similarity', 1.0)
+        self.penalty_diversity = h_params.get('penalty_diversity', 1.0)
+        self.penalty_fluency = h_params.get('penalty_fluency', 1.0)
 
         # explainer:
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -273,6 +277,12 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         criterion_cls = nn.MSELoss if not self.is_multilabel else nn.NLLLoss
         self.ff_criterion = criterion_cls(reduction="none")
         self.cf_criterion = criterion_cls(reduction="none")
+
+        if 'fluency' in self.cf_supervision:
+            from transformers import AutoModelForCausalLM
+            self.lm_model = AutoModelForCausalLM.from_pretrained("gpt2")
+            self.lm_model.eval()
+            freeze_module(self.lm_model)
 
         ########################
         # metrics
@@ -833,8 +843,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         if 'similarity' in self.cf_supervision:
             # maximize similarity between emb(x_cf) and emb(x_tilde)
             x_cf_emb = get_x_emb(x_cf).mean(1)
-            x_tilde_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-            x_tilde_emb = get_x_emb(x_tilde_ids).mean(1)
+            x_tilde_emb = get_x_emb(x_tilde).mean(1)
             cost = 1 - torch.nn.functional.cosine_similarity(x_cf_emb, x_tilde_emb, dim=-1)
             penalty += self.penalty_similarity * cost.mean()
 
@@ -842,8 +851,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             # maximize diversity of several sampled x_tildes
             # penalty += det(1 / 1 + dist(x_tilde_i, x_tilde_j))
             assert isinstance(x_tilde, (list, tuple))
-            gen_ids = [x if x.dim() == 2 else x.argmax(dim=-1) for x in x_tilde]
-            gen_embs = torch.stack([get_x_emb(x).mean(1) for x in gen_ids])
+            gen_embs = torch.stack([get_x_emb(x).mean(1) for x in x_tilde])
             gen_embs_sq = gen_embs.transpose(0, 1) ** 2
             dist_matrix = torch.sqrt(gen_embs_sq @ gen_embs_sq.transpose(-1, -2))
             cost = torch.linalg.det(1 / (1 + dist_matrix))
@@ -853,9 +861,14 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             # maximize the fluency of x_cf_tilde
             # lm = https://huggingface.co/distilgpt2
             # penalty += neg_perplexity_pretrained_lm(x_tilde)
-            x_tilde_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-            labels = x_tilde_ids.roll(1, dims=-1)
-            cost = self.lm_model(input_ids=x_tilde_ids, labels=labels)[0]
+            lm_labels = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
+            lm_labels = lm_labels.masked_fill(lm_labels == self.pad_token_id, -100).detach()
+            if x_tilde.dim() == 2:
+                outputs = self.lm_model(input_ids=x_tilde, labels=lm_labels)
+            else:
+                x_tilde_embeds = x_tilde @ self.lm_model.transformer.wte.weight
+                outputs = self.lm_model(inputs_embeds=x_tilde_embeds, labels=lm_labels)
+            cost = outputs.loss
             penalty += self.penalty_fluency * cost.mean()
 
         # unsupervised setting, use reinforce or gumbel-softmax (default)
