@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-imdb-sparsemap-cf-transformer/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-imdb-hardkuma-transformer/'  # path to save logs and models
 
 
 # training args
@@ -17,7 +17,7 @@ train:
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'revised_imdb_cf'           # data module name (see docs for more options)
+    dm: 'revised_imdb'              # data module name (see docs for more options)
     batch_size: 8                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
@@ -33,21 +33,18 @@ train:
         max_seq_len: 512
 
     # early stopping
-    monitor: 'val_cf_accuracy'     # quantity to be monitored
+    monitor: 'val_ff_accuracy'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
-    monitor_patience: 3         # number of epochs to wait for early stopping
+    monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'transformer_spectra_cf'
-
-    # checkpointing
-    # ckpt: null
-    # experiments/cfrat-revised-imdb-sparsemap-orig-transformer/version2tw9c5dp/checkpoints/epoch=9.ckpt
-    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-orig-transformer/versionq6jjj9pn/checkpoints/epoch=4.ckpt
-    load_tokenizer: False
-    load_label_encoder: False
+    model: 'transformer_hardkuma'
 
     # factual flow
+    # ckpt: null
+    # factual_ckpt: null
+    # load_tokenizer: False
+    # load_label_encoder: True
     tokenizer: 'bert-base-cased'
     gen_arch: 'bert-base-cased'
     gen_emb_requires_grad: False
@@ -59,59 +56,33 @@ train:
     pred_encoder_requires_grad: True
     pred_output_requires_grad: True
     shared_gen_pred: False
-    explainer: 'sparsemap'
+    explainer: 'hardkuma'
+    explainer_relaxed: False
     explainer_pre_mlp: True
     explainer_requires_grad: True
-    sparsemap_budget: 10
-    sparsemap_temperature: 0.01
-    sparsemap_transition: 0.0001
+    explainer_temperature: 0.0001
+    hardkuma_lagrange_lr: 0.01
+    hardkuma_alpha: 0.99
+    hardkuma_lambda_init: 0.6
+    hardkuma_lambda_min: 0.6
+    hardkuma_lambda_max: 0.6
+#    hardkuma_lagrange_lr: 0.05
+#    hardkuma_alpha: 0.1
+#    hardkuma_lambda_init: 0.0001
+#    hardkuma_lambda_min: 0.000001
+#    hardkuma_lambda_max: 1
+    sparsity_penalty: 0.1
+    contiguity_penalty: 0.0
     dropout: 0.1
     selection_space: 'embedding'
     selection_vector: 'zero'
     selection_faithfulness: True
     selection_mask: False
-    temperature: 1.0
-
-    # counterfactual flow
-    cf_tokenizer: 'bert-base-cased'
-    cf_gen_arch: "bert-base-cased"
-    cf_gen_emb_requires_grad: False
-    cf_gen_encoder_requires_grad: False
-    cf_gen_lm_head_requires_grad: True
-    cf_dropout: 0.1
-    cf_input_space: 'embedding'
-    cf_selection_vector: 'zero'
-    cf_selection_mask: False
-    cf_selection_faithfulness: True
-    cf_selection_mode: 'none'
-    cf_manual_sample: True
-    cf_use_reinforce: False
-    cf_use_reinforce_baseline: False
-    cf_prepend_label_for_mice: False
-    cf_generate_kwargs:
-        do_sample: True             # deterministic or stochastic generation
-        num_beams: 1                # mice: 15
-        num_beam_groups: 1          # to promote diversity in beam groups
-        early_stopping: False       # stop the beam search when at least `num_beams` sentences are finished
-        length_penalty: 1.0         # (<1) means shorter sequences, (>1) longer sequences
-        top_k: 10                   # default: 50  | mice: 30
-        top_p: 1.0                  # default: 1.0 | mice: 0.95
-        typical_p: null             # default: 1.0
-        no_repeat_ngram_size: 0     # no bigrams repetitions are allowed (default: 0 | mice: 2)
-        num_return_sequences: 1     # sample N sequences
-        min_length: 'original'      # minimum length of the generated sequence (original: minimum length of the input)
-        max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)
-
-    # both flows
-    share_generators: False      # share generators between flows
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
-    cf_lr: 0.00001
-    ff_lbda: 0.3
-    cf_lbda: 1.0
-    weight_decay: 0.0
+    lr: 0.000005
+    weight_decay: 0.0000001
     betas: [0.9, 0.999]
     amsgrad: False
     momentum: 0.0
@@ -132,7 +103,7 @@ train:
     accelerator: gpu
     devices: 1
     gradient_clip_val: 5.0
-    min_epochs: 2
+    min_epochs: 3
     max_epochs: 10
     #limit_test_batches:
     #limit_train_batches: 10

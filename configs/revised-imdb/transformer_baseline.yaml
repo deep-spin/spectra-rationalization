@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-imdb-bernoulli-transformer/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-imdb-baseline-transformer/'  # path to save logs and models
 
 
 # training args
@@ -38,38 +38,23 @@ train:
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'transformer_bernoulli'
+    model: 'transformer_baseline'
 
     # factual flow
     # ckpt: null
     # factual_ckpt: null
     # load_tokenizer: False
     # load_label_encoder: True
-    tokenizer: 'bert-base-cased'
-    gen_arch: 'bert-base-cased'
-    gen_emb_requires_grad: False
-    gen_encoder_requires_grad: False
-    gen_use_decoder: False
-    pred_emb_requires_grad: False
-    pred_arch: 'bert-base-cased'
-    pred_bidirectional: False
-    pred_encoder_requires_grad: True
-    pred_output_requires_grad: True
-    shared_gen_pred: False
-    explainer: 'bernoulli'
-    explainer_relaxed: True
+    tokenizer: 'roberta-base'
+    gen_arch: 'roberta-base'
+    gen_emb_requires_grad: True
+    gen_encoder_requires_grad: True
+    gen_use_encoder: True
+    explainer: 'attention'
+    explainer_activation: 'entmax'
     explainer_pre_mlp: True
     explainer_requires_grad: True
-    use_reinforce_baseline: True
-    controlled_sparsity_penalty: 0.1
-    sparsity_penalty: 0.00025
-    contiguity_penalty: 0.0
     dropout: 0.1
-    selection_space: 'embedding'
-    selection_vector: 'zero'
-    selection_faithfulness: True
-    selection_mask: False
-    temperature: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
