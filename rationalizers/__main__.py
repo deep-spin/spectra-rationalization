@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from rationalizers import predict, train, resume, cf_train, cf_predict
+from rationalizers import predict, train, resume, cf_train, cf_predict, cf_search
 from rationalizers.utils import (
     configure_output_dir,
     configure_seed,
@@ -119,4 +119,5 @@ if __name__ == "__main__":
         cf_predict.run(args)
     elif tmp_args.task == "search":
         pass
-        # search.run(args)
+    elif tmp_args.task == "cf_search":
+        cf_search.run(args)
