@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-imdb-sparsemap-cf-transformer/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-imdb-sparsemap-cf-tmp-supervised-transformer/'  # path to save logs and models
 
 
 # training args
@@ -38,21 +38,21 @@ train:
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'transformer_spectra_cf'
+    model: 'transformer_spectra_cf_supervised'
 
     # factual flow
     # ckpt: null
     # factual_ckpt: null
     # load_tokenizer: False
     # load_label_encoder: True
-    tokenizer: 'roberta-base'
-    gen_arch: 'roberta-base'
+    tokenizer: 'bert-base-cased'
+    gen_arch: 'bert-base-cased'
     gen_emb_requires_grad: False
     gen_encoder_requires_grad: False
     gen_use_decoder: False
-    pred_emb_requires_grad: False
-    pred_arch: 'roberta-base'
+    pred_arch: 'bert-base-cased'
     pred_bidirectional: False
+    pred_emb_requires_grad: False
     pred_encoder_requires_grad: True
     pred_output_requires_grad: True
     shared_gen_pred: False
@@ -70,11 +70,17 @@ train:
     temperature: 1.0
 
     # supervision
-    cf_manual_sample: True
+    cf_manual_sample: False
+    cf_supervision: 'seq2seq'
+    #cf_supervision: 'seq2seq,similarity'
+    penalty_seq2seq: 10.0
+    penalty_similarity: 0.0
+    penalty_diversity: 0.0
+    penalty_fluency: 0.0
 
     # counterfactual flow
-    cf_tokenizer: 'roberta-base'
-    cf_gen_arch: "roberta-base"
+    cf_tokenizer: 'bert-base-cased'
+    cf_gen_arch: "bert-base-cased"
     cf_gen_emb_requires_grad: False
     cf_gen_encoder_requires_grad: False
     cf_gen_lm_head_requires_grad: True
@@ -87,8 +93,9 @@ train:
     cf_use_reinforce: False
     cf_use_reinforce_baseline: False
     cf_prepend_label_for_mice: False
+    cf_teacher_forcing_during_eval: False
     cf_generate_kwargs:
-        do_sample: True             # deterministic or stochastic generation
+        do_sample: False            # deterministic or stochastic generation
         num_beams: 1                # mice: 15
         num_beam_groups: 1          # to promote diversity in beam groups
         early_stopping: False       # stop the beam search when at least `num_beams` sentences are finished
@@ -98,7 +105,7 @@ train:
         typical_p: null             # default: 1.0
         no_repeat_ngram_size: 0     # no bigrams repetitions are allowed (default: 0 | mice: 2)
         num_return_sequences: 1     # sample N sequences
-        min_length: 'original'      # minimum length of the generated sequence (original: minimum length of the input)
+        min_length: null            # minimum length of the generated sequence
         max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)
 
     # both flows
@@ -106,8 +113,8 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
-    cf_lr: 0.00001
+    lr: 0.0001
+    cf_lr: 0.0001
     ff_lbda: 1.0
     cf_lbda: 1.0
     weight_decay: 0.000001

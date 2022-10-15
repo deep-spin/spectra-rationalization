@@ -51,7 +51,7 @@ train:
     gen_encoder_requires_grad: False
     gen_use_decoder: False
     pred_emb_requires_grad: False
-    pred_arch: 'bert-base-cased'
+    pred_arch: 'roberta-base'
     pred_bidirectional: False
     pred_encoder_requires_grad: True
     pred_output_requires_grad: True
