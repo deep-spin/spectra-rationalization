@@ -178,19 +178,6 @@ class TransformerBaseRationalizer(BaseRationalizer):
         criterion_cls = nn.MSELoss if not self.is_multilabel else nn.NLLLoss
         self.ff_criterion = criterion_cls(reduction="none")
 
-        ########################
-        # metrics
-        ########################
-        self.ff_train_accuracy = torchmetrics.Accuracy()
-        self.ff_val_accuracy = torchmetrics.Accuracy()
-        self.ff_test_accuracy = torchmetrics.Accuracy()
-        self.ff_train_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_val_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_test_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_train_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.ff_val_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.ff_test_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-
         # remove leftover from the base class
         del self.train_accuracy, self.val_accuracy, self.test_accuracy
         del self.train_precision, self.val_precision, self.test_precision
@@ -489,6 +476,9 @@ class TransformerBaseRationalizer(BaseRationalizer):
         if "mse" in ff_loss_stats.keys():
             output[f"{prefix}_mse"] = ff_loss_stats["mse"]
 
+        if "is_original" in batch.keys():
+            output[f"{prefix}_is_original"] = batch["is_original"]
+
         return output
 
     def _shared_eval_epoch_end(self, outputs: list, prefix: str):
@@ -498,87 +488,126 @@ class TransformerBaseRationalizer(BaseRationalizer):
         :param outputs: list of dicts representing the stacked outputs from validation_step
         :param prefix: `val` or `test`
         """
-        # assume that `outputs` is a list containing dicts with the same keys
-        stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
-        # sample a few examples to be logged in wandb
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
-        shuffle(idxs)
-        idxs = idxs[:10] if prefix != 'test' else idxs[:100]
+        def shared_helper(stacked_outputs, flow='ff'):
+            # sample a few examples to be logged in wandb
+            idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+            shuffle(idxs)
+            idxs = idxs[:10] if prefix != 'test' else idxs[:100]
 
-        # useful functions
-        select = lambda v: [v[i] for i in idxs]
-        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
+            # useful functions
+            select = lambda v: [v[i] for i in idxs]
+            detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
 
-        # log rationales
-        if self.log_rationales_in_wandb:
-            pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
-            scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
-            gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-            pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
-            lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-            html_string = get_html_rationales(pieces, scores, gold, pred, lens)
-            self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+            # log rationales
+            if self.log_rationales_in_wandb:
+                pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+                scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+                gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+                pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+                lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+                html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+                self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
-        # save rationales
-        if self.hparams.save_rationales:
-            scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
-            lens = unroll(stacked_outputs[f"{prefix}_lengths"])
-            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
-            shell_logger.info(f'Saving rationales in {filename}...')
-            save_rationales(filename, scores, lens)
+            # save rationales
+            if self.hparams.save_rationales:
+                scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
+                lens = unroll(stacked_outputs[f"{prefix}_lengths"])
+                filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+                shell_logger.info(f'Saving rationales in {filename}...')
+                save_rationales(filename, scores, lens)
 
-        # log metrics
-        dict_metrics = {
-            f"{prefix}_ff_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
-            f"{prefix}_ff_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
-        }
+            # log metrics
+            dict_metrics = {
+                f"{prefix}_{flow}_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
+                f"{prefix}_{flow}_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
+            }
 
-        # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
-        if prefix == "test" and "test_annotations" in stacked_outputs.keys():
-            rat_metrics = evaluate_rationale(
-                stacked_outputs["test_ids_rationales"],
-                stacked_outputs["test_annotations"],
-                stacked_outputs["test_lengths"],
-            )
-            dict_metrics[f"{prefix}_ff_rat_precision"] = rat_metrics["macro_precision"]
-            dict_metrics[f"{prefix}_ff_rat_recall"] = rat_metrics["macro_recall"]
-            dict_metrics[f"{prefix}_ff_rat_f1"] = rat_metrics["f1_score"]
+            # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
+            if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+                rat_metrics = evaluate_rationale(
+                    stacked_outputs["test_ids_rationales"],
+                    stacked_outputs["test_annotations"],
+                    stacked_outputs["test_lengths"],
+                )
+                dict_metrics[f"{prefix}_{flow}_rat_precision"] = rat_metrics["macro_precision"]
+                dict_metrics[f"{prefix}_{flow}_rat_recall"] = rat_metrics["macro_recall"]
+                dict_metrics[f"{prefix}_{flow}_rat_f1"] = rat_metrics["f1_score"]
 
-        # log classification metrics
-        if self.is_multilabel:
-            preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_predictions"]), dim=-1)
-            labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_labels"]), device=preds.device)
-            if prefix == "val":
-                ff_accuracy = self.ff_val_accuracy(preds, labels)
-                ff_precision = self.ff_val_precision(preds, labels)
-                ff_recall = self.ff_val_recall(preds, labels)
-                ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
+            # log classification metrics
+            if self.is_multilabel:
+                preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_predictions"]), dim=-1)
+                labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_labels"]), device=preds.device)
+                accuracy = torchmetrics.functional.accuracy(
+                    preds, labels, num_classes=self.nb_classes, average="macro"
+                )
+                precision = torchmetrics.functional.precision(
+                    preds, labels, num_classes=self.nb_classes, average="macro"
+                )
+                recall = torchmetrics.functional.recall(
+                    preds, labels, num_classes=self.nb_classes, average="macro"
+                )
+                f1_score = 2 * precision * recall / (precision + recall)
+                dict_metrics[f"{prefix}_{flow}_accuracy"] = accuracy
+                dict_metrics[f"{prefix}_{flow}_precision"] = precision
+                dict_metrics[f"{prefix}_{flow}_recall"] = recall
+                dict_metrics[f"{prefix}_{flow}_f1score"] = f1_score
             else:
-                ff_accuracy = self.ff_test_accuracy(preds, labels)
-                ff_precision = self.ff_test_precision(preds, labels)
-                ff_recall = self.ff_test_recall(preds, labels)
-                ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
-            dict_metrics[f"{prefix}_ff_accuracy"] = ff_accuracy
-            dict_metrics[f"{prefix}_ff_precision"] = ff_precision
-            dict_metrics[f"{prefix}_ff_recall"] = ff_recall
-            dict_metrics[f"{prefix}_ff_f1score"] = ff_f1_score
-        else:
-            dict_metrics[f"{prefix}_ff_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
+                dict_metrics[f"{prefix}_{flow}_mse"] = np.mean(stacked_outputs[f"{prefix}_mse"])
 
-        # log all saved metrics
-        for metric_name, metric_value in dict_metrics.items():
-            shell_logger.info("{}: {:.4f}".format(metric_name, metric_value))
-            self.log(
-                metric_name,
-                metric_value,
-                prog_bar=False,
-                logger=True,
-                on_step=False,
-                on_epoch=True,
-            )
+            # log all saved metrics
+            for metric_name, metric_value in dict_metrics.items():
+                shell_logger.info("{}: {:.4f}".format(metric_name, metric_value))
+                self.log(
+                    metric_name,
+                    metric_value,
+                    prog_bar=False,
+                    logger=True,
+                    on_step=False,
+                    on_epoch=True,
+                )
 
-        # aggregate across epochs
-        self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
+            # aggregate across epochs
+            self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
+
+            return dict_metrics
+
+        def split_outputs_by_flows(outputs):
+            # assume that `outputs` is a list containing dicts with the same keys
+            # stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
+            stacked_outputs_ff = {k: [] for k in outputs[0].keys()}
+            stacked_outputs_cf = {k: [] for k in outputs[0].keys()}
+            has_cf = False
+            for x in outputs:
+                for k in x.keys():
+                    if f'{prefix}_is_original' not in x.keys():
+                        stacked_outputs_ff[k].append(x[k])
+                    else:
+                        ff_idxs = [i for i, is_original in enumerate(x[f'{prefix}_is_original']) if is_original]
+                        cf_idxs = [i for i, is_original in enumerate(x[f'{prefix}_is_original']) if not is_original]
+                        has_cf = len(cf_idxs) > 0 or has_cf
+                        if isinstance(x[k], torch.Tensor):
+                            stacked_outputs_ff[k].append(torch.stack([x[k][i] for i in ff_idxs]))
+                            stacked_outputs_cf[k].append(torch.stack([x[k][i] for i in cf_idxs]))
+                        elif isinstance(x[k], (tuple, list)):
+                            stacked_outputs_ff[k].append([x[k][i] for i in ff_idxs])
+                            stacked_outputs_cf[k].append([x[k][i] for i in cf_idxs])
+                        else:
+                            stacked_outputs_ff[k].append(x[k])
+                            stacked_outputs_cf[k].append(x[k])
+            stacked_outputs_cf = stacked_outputs_cf if has_cf else None
+            return stacked_outputs_ff, stacked_outputs_cf
+
+        # split outputs by flows
+        stacked_outputs_ff, stacked_outputs_cf = split_outputs_by_flows(outputs)
+
+        # evaluate ff
+        dict_metrics = shared_helper(stacked_outputs_ff, flow='ff')
+
+        if stacked_outputs_cf is not None:
+            # evaluate cf
+            dict_cf_metrics = shared_helper(stacked_outputs_cf, flow='cf')
+            # merge metrics
+            dict_metrics = {**dict_metrics, **dict_cf_metrics}
 
         return dict_metrics

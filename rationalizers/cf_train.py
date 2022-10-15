@@ -149,24 +149,11 @@ def run(args):
                 new_stat_dict[stat_name] = stat_value
             logger.log_metrics(new_stat_dict)
 
-    if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
-        # perform test separately in case the model does not have a counterfactual flow
-        shell_logger.info("Testing on counterfactuals...")
-        dm.is_original = False
-        outputs = trainer.test(datamodule=dm, verbose=True)
-        log_final_outputs(outputs, flow_name='cf', prefix_name=None)
-
-        shell_logger.info("Testing on factuals...")
-        dm.is_original = True
-        outputs = trainer.test(datamodule=dm, verbose=True)
-        log_final_outputs(outputs, flow_name='ff', prefix_name=None)
-
-    else:
-        # perform test on both factuals and counterfactuals
-        shell_logger.info("Testing on all samples...")
-        dm.is_original = None
-        outputs = trainer.test(datamodule=dm, verbose=True)
-        log_final_outputs(outputs, flow_name=None, prefix_name=None)
+    # perform test
+    shell_logger.info("Testing on all samples...")
+    dm.is_original = None
+    outputs = trainer.test(datamodule=dm, verbose=True)
+    log_final_outputs(outputs, flow_name=None, prefix_name=None)
 
     # log the best model path
     if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:

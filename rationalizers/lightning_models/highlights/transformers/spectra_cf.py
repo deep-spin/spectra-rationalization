@@ -292,28 +292,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             self.lm_model.eval()
             freeze_module(self.lm_model)
 
-        ########################
-        # metrics
-        ########################
-        self.ff_train_accuracy = torchmetrics.Accuracy()
-        self.ff_val_accuracy = torchmetrics.Accuracy()
-        self.ff_test_accuracy = torchmetrics.Accuracy()
-        self.ff_train_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_val_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_test_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.ff_train_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.ff_val_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.ff_test_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.cf_train_accuracy = torchmetrics.Accuracy()
-        self.cf_val_accuracy = torchmetrics.Accuracy()
-        self.cf_test_accuracy = torchmetrics.Accuracy()
-        self.cf_train_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.cf_val_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.cf_test_precision = torchmetrics.Precision(num_classes=nb_classes, average="macro")
-        self.cf_train_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.cf_val_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-        self.cf_test_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-
         # remove leftover from the base class
         del self.train_accuracy, self.val_accuracy, self.test_accuracy
         del self.train_precision, self.val_precision, self.test_precision
@@ -1209,24 +1187,26 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_labels"]), device=preds.device)
             cf_preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_cf_predictions"]), dim=-1)
             cf_labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_cf_labels"]), device=cf_preds.device)
-            if prefix == "val":
-                ff_accuracy = self.ff_val_accuracy(preds, labels)
-                ff_precision = self.ff_val_precision(preds, labels)
-                ff_recall = self.ff_val_recall(preds, labels)
-                ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
-                cf_accuracy = self.cf_val_accuracy(cf_preds, cf_labels)
-                cf_precision = self.cf_val_precision(cf_preds, cf_labels)
-                cf_recall = self.cf_val_recall(cf_preds, cf_labels)
-                cf_f1_score = 2 * cf_precision * cf_recall / (cf_precision + cf_recall)
-            else:
-                ff_accuracy = self.ff_test_accuracy(preds, labels)
-                ff_precision = self.ff_test_precision(preds, labels)
-                ff_recall = self.ff_test_recall(preds, labels)
-                ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
-                cf_accuracy = self.cf_test_accuracy(cf_preds, cf_labels)
-                cf_precision = self.cf_test_precision(cf_preds, cf_labels)
-                cf_recall = self.cf_test_recall(cf_preds, cf_labels)
-                cf_f1_score = 2 * cf_precision * cf_recall / (cf_precision + cf_recall)
+            ff_accuracy = torchmetrics.functional.accuracy(
+                preds, labels, num_classes=self.nb_classes, average="macro"
+            )
+            ff_precision = torchmetrics.functional.precision(
+                preds, labels, num_classes=self.nb_classes, average="macro"
+            )
+            ff_recall = torchmetrics.functional.recall(
+                preds, labels, num_classes=self.nb_classes, average="macro"
+            )
+            ff_f1_score = 2 * ff_precision * ff_recall / (ff_precision + ff_recall)
+            cf_accuracy = torchmetrics.functional.accuracy(
+                cf_preds, cf_labels, num_classes=self.nb_classes, average="macro"
+            )
+            cf_precision = torchmetrics.functional.precision(
+                cf_preds, cf_labels, num_classes=self.nb_classes, average="macro"
+            )
+            cf_recall = torchmetrics.functional.recall(
+                cf_preds, cf_labels, num_classes=self.nb_classes, average="macro"
+            )
+            cf_f1_score = 2 * cf_precision * cf_recall / (cf_precision + cf_recall)
             dict_metrics[f"{prefix}_ff_accuracy"] = ff_accuracy
             dict_metrics[f"{prefix}_ff_precision"] = ff_precision
             dict_metrics[f"{prefix}_ff_recall"] = ff_recall
