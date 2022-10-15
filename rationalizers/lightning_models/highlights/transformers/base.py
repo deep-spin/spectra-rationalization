@@ -587,11 +587,15 @@ class TransformerBaseRationalizer(BaseRationalizer):
                         cf_idxs = [i for i, is_original in enumerate(x[f'{prefix}_is_original']) if not is_original]
                         has_cf = len(cf_idxs) > 0 or has_cf
                         if isinstance(x[k], torch.Tensor):
-                            stacked_outputs_ff[k].append(torch.stack([x[k][i] for i in ff_idxs]))
-                            stacked_outputs_cf[k].append(torch.stack([x[k][i] for i in cf_idxs]))
+                            if len(ff_idxs) > 0:
+                                stacked_outputs_ff[k].append(torch.stack([x[k][i] for i in ff_idxs]))
+                            if len(cf_idxs) > 0:
+                                stacked_outputs_cf[k].append(torch.stack([x[k][i] for i in cf_idxs]))
                         elif isinstance(x[k], (tuple, list)):
-                            stacked_outputs_ff[k].append([x[k][i] for i in ff_idxs])
-                            stacked_outputs_cf[k].append([x[k][i] for i in cf_idxs])
+                            if len(ff_idxs) > 0:
+                                stacked_outputs_ff[k].append([x[k][i] for i in ff_idxs])
+                            if len(cf_idxs) > 0:
+                                stacked_outputs_cf[k].append([x[k][i] for i in cf_idxs])
                         else:
                             stacked_outputs_ff[k].append(x[k])
                             stacked_outputs_cf[k].append(x[k])
