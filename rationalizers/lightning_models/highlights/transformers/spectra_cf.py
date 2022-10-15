@@ -9,7 +9,7 @@ import torch
 import torchmetrics
 import wandb
 from torch import nn
-from transformers import AutoModel
+from transformers import AutoModel, RobertaForMaskedLM, BertForMaskedLM
 
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
@@ -87,7 +87,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.cf_prepend_label_for_mice = h_params.get("cf_prepend_label_for_mice", False)
         self.cf_task_for_mice = h_params.get("cf_task_for_mice", "imdb")
         self.cf_manual_sample = h_params.get("cf_manual_sample", True)
-        self.cf_supervision = h_params.get("cf_supervision", None)
+        self.cf_supervision = h_params.get("cf_supervision", 'none')
         self.penalty_seq2seq = h_params.get('penalty_seq2seq', 1.0)
         self.penalty_similarity = h_params.get('penalty_similarity', 1.0)
         self.penalty_diversity = h_params.get('penalty_diversity', 1.0)
@@ -187,8 +187,16 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 self.cf_gen_hf.lm_head = deepcopy(self.cf_gen_hf.lm_head)  # detach lm_head from shared weights
             self.cf_gen_lm_head = self.cf_gen_hf.lm_head
             self.cf_gen_hidden_size = self.cf_gen_hf.config.hidden_size
+        elif 'roberta' in self.cf_gen_arch:
+            self.cf_gen_hf = RobertaForMaskedLM.from_pretrained(self.cf_gen_arch)
+            if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
+                self.cf_gen_hf.lm_head = deepcopy(self.cf_gen_hf.lm_head)  # detach lm_head from shared weights
+            self.cf_gen_emb_layer = self.cf_gen_hf.roberta.embeddings
+            self.cf_gen_encoder = self.cf_gen_hf.roberta.encoder
+            self.cf_gen_lm_head = self.cf_gen_hf.lm_head
+            self.cf_gen_decoder = None
+            self.cf_gen_hidden_size = self.cf_gen_hf.roberta.config.hidden_size
         elif 'bert' in self.cf_gen_arch:
-            from transformers import BertForMaskedLM
             self.cf_gen_hf = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
             if self.cf_gen_lm_head_requires_grad != self.cf_gen_emb_requires_grad:
                 self.cf_gen_hf.cls = deepcopy(self.cf_gen_hf.cls)  # detach lm_head from shared weights
@@ -323,6 +331,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         ff_params = chain(
             self.ff_gen_emb_layer.parameters(),
             self.ff_gen_encoder.parameters(),
+            self.ff_gen_decoder.parameters() if self.ff_gen_decoder is not None else [],
             self.ff_pred_emb_layer.parameters() if not self.ff_shared_gen_pred else [],
             self.ff_pred_encoder.parameters() if not self.ff_shared_gen_pred else [],
             self.ff_output_layer.parameters(),
@@ -332,9 +341,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_params = chain(
             self.cf_gen_emb_layer.parameters() if not self.share_generators else [],
             self.cf_gen_encoder.parameters() if not self.share_generators else [],
+            self.cf_gen_decoder.parameters() if not self.share_generators and self.cf_gen_decoder is not None else [],
             self.cf_gen_lm_head.parameters(),
         )
-
         grouped_parameters = []
         if self.ff_lbda > 0:
             grouped_parameters += [{"params": ff_params, 'lr': self.hparams['lr']}]
@@ -371,14 +380,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
-        # fix inputs for supervision-style training
-        if self.cf_supervision:
-            raise NotImplementedError
-            # todo: handle the seq2seq case
-            x_cf = x.clone()
-            mask_cf = mask.clone() if mask is not None else None
-            token_type_ids_cf = token_type_ids.clone() if token_type_ids is not None else None
-
         # factual flow
         z, y_hat = self.get_factual_flow(
             x, mask=mask, token_type_ids=token_type_ids
@@ -583,7 +584,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             cf_gen_enc_out = self.cf_gen_encoder(s_bar, ext_mask)
             h_tilde = cf_gen_enc_out.last_hidden_state
 
-        # sample from LM
+        # sample from the LM head
         x_tilde, logits = self._sample_from_lm(x, h_tilde, z_mask, mask, encoder_outputs=cf_gen_enc_out)
 
         # expand z to account for the new generated tokens (important for t5)
@@ -672,44 +673,33 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                     num_sentinels = (z_mask > 0).long().sum(-1).min().item()
                     gen_kwargs['min_length'] = min(gen_kwargs['max_length'], num_sentinels * 2)
 
-                if 'seq2seq' in self.cf_supervision:
-                    bos_tensor = self.tokenizer.bos_token_id * torch.ones_like(x_cf[:, :1])
-                    x_tilde = torch.cat([bos_tensor, x_cf[:, :-1]], dim=-1)
-                    cf_gen_dec_out = self.cf_gen_decoder(
-                        input_ids=x_tilde,
-                        attention_mask=(x_tilde != constants.PAD_ID).long(),
-                        encoder_hidden_states=encoder_hidden_states
-                    )
-                    logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)
+                # sample autoregressively
+                gen_out = self.cf_gen_hf.generate(
+                    encoder_outputs=encoder_outputs,
+                    attention_mask=mask.long(),
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                    **gen_kwargs
+                )
+                # clear memory because generation is done
+                # torch.cuda.empty_cache()
 
-                else:
-                    # sample autoregressively
-                    gen_out = self.cf_gen_hf.generate(
-                        encoder_outputs=encoder_outputs,
-                        attention_mask=mask.long(),
-                        return_dict_in_generate=True,
-                        output_scores=True,
-                        **gen_kwargs
-                    )
-                    # clear memory because generation is done
-                    # torch.cuda.empty_cache()
+                # idk why but t5 generates a pad symbol as the first token
+                # so we cut it out for all samples in the batch
+                # (this happens only for .sequences)
+                x_tilde = gen_out.sequences[:, 1:]
 
-                    # idk why but t5 generates a pad symbol as the first token
-                    # so we cut it out for all samples in the batch
-                    # (this happens only for .sequences)
-                    x_tilde = gen_out.sequences[:, 1:]
+                # check forward and backward values match
+                import ipdb; ipdb.set_trace()
+                logits = gen_out.scores
 
-                    # check forward and backward values match
-                    import ipdb; ipdb.set_trace()
-                    logits = gen_out.scores
-
-                    # get the logits for x_tilde
-                    cf_gen_dec_out = self.cf_gen_decoder(
-                        input_ids=gen_out.sequences,
-                        attention_mask=(gen_out.sequences != constants.PAD_ID).long(),
-                        encoder_hidden_states=encoder_hidden_states
-                    )
-                    logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)[:, :-1]
+                # get the logits for x_tilde
+                cf_gen_dec_out = self.cf_gen_decoder(
+                    input_ids=gen_out.sequences,
+                    attention_mask=(gen_out.sequences != constants.PAD_ID).long(),
+                    encoder_hidden_states=encoder_hidden_states
+                )
+                logits = self.cf_gen_lm_head(cf_gen_dec_out.last_hidden_state)[:, :-1]
 
             else:
                 # sample directly from the output layer
@@ -829,16 +819,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # logits = alpha * self.adaptor_logits(x) + (1 - alpha) * self.cf_flow_logits(x)
 
         # supervise logp_xtilde
-        penalty = 0
-        if 'seq2seq' in self.cf_supervision:
-            # we need to use T5 here, there is no way to do this with an encoder-only model
-            # approximate original distribution with the new distribution
-            # penalty += - torch.nn.functional.kl_divergence(original_bert_dist, torch.exp(logp_xtilde))
-            lm_logits = self.cf_log_prob_x_tilde.view(-1, self.cf_log_prob_x_tilde.size(-1))
-            lm_labels = x_cf.view(-1,)
-            lm_labels = lm_labels.masked_fill(lm_labels == self.pad_token_id, -100)
-            cost = torch.nn.functional.nll_loss(lm_logits, lm_labels)
-            penalty += self.penalty_seq2seq * cost.mean()
+        penalty = torch.zeros_like(loss)
 
         if 'similarity' in self.cf_supervision:
             # maximize similarity between emb(x_cf) and emb(x_tilde)
@@ -951,6 +932,9 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
             main_loss = loss + cost_logpz
 
+        # add penalties
+        main_loss = main_loss + penalty
+
         # latent selection stats
         num_0, num_c, num_1, total = get_z_stats(z_tilde, mask_tilde)
         stats[prefix + "_cf_p0"] = num_0 / float(total)
@@ -958,6 +942,7 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         stats[prefix + "_cf_p1"] = num_1 / float(total)
         stats[prefix + "_cf_ps"] = (num_c + num_1) / float(total)
         stats[prefix + "_cf_main_loss"] = main_loss.item()
+        stats[prefix + "_cf_penalty"] = penalty.item()
 
         return main_loss, stats
 
@@ -982,10 +967,20 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         token_type_ids = batch.get("token_type_ids", None)
         cf_token_type_ids = batch.get("cf_token_type_ids", None)
         prefix = "train"
+        self.stage = prefix
 
-        (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids, current_epoch=self.current_epoch
-        )
+        # forward pass
+        if self.cf_manual_sample is True or 'seq2seq' in self.cf_supervision:
+            (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+                input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids,
+                current_epoch=self.current_epoch
+            )
+        else:
+            # fix inputs for supervised training
+            (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+                input_ids, input_ids, mask, mask, token_type_ids, token_type_ids,
+                current_epoch=self.current_epoch
+            )
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
@@ -995,7 +990,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # compute counterfactual loss
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
         y_tilde = cf_labels if not self.is_multilabel else cf_labels.view(-1)
-        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_tilde, z_tilde, mask_tilde, prefix=prefix)
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(
+            y_tilde_hat, y_tilde, z_tilde, mask_tilde, prefix=prefix,
+            x_tilde=x_tilde, x_cf=cf_input_ids,
+        )
 
         # combine losses
         loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
@@ -1044,11 +1042,20 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         cf_labels = batch["cf_labels"] if "cf_labels" in batch else labels
         token_type_ids = batch.get("token_type_ids", None)
         cf_token_type_ids = batch.get("cf_token_type_ids", None)
+        self.stage = prefix
 
-        # forward-pass
-        (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
-            input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids, current_epoch=self.current_epoch
-        )
+        # forward pass
+        if self.cf_manual_sample is True or 'seq2seq' in self.cf_supervision:
+            (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+                input_ids, cf_input_ids, mask, cf_mask, token_type_ids, cf_token_type_ids,
+                current_epoch=self.current_epoch
+            )
+        else:
+            # fix inputs for supervised training
+            (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat) = self(
+                input_ids, input_ids, mask, mask, token_type_ids, token_type_ids,
+                current_epoch=self.current_epoch
+            )
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
@@ -1059,7 +1066,10 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # compute counterfactual loss
         y_tilde_hat = y_tilde_hat if not self.is_multilabel else y_tilde_hat.view(-1, self.nb_classes)
         y_tilde = cf_labels if not self.is_multilabel else cf_labels.view(-1)
-        cf_loss, cf_loss_stats = self.get_counterfactual_loss(y_tilde_hat, y_tilde, z_tilde, mask_tilde, prefix=prefix)
+        cf_loss, cf_loss_stats = self.get_counterfactual_loss(
+            y_tilde_hat, y_tilde, z_tilde, mask_tilde, prefix=prefix,
+            x_tilde=x_tilde, x_cf=cf_input_ids,
+        )
         self.logger.agg_and_log_metrics(cf_loss_stats, step=None)
 
         # combine losses
@@ -1072,16 +1082,15 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
 
         # get factual rationales
         z_1 = (z > 0).long()  # non-zero probs are considered selections
-        ids_rationales, rationales = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
-        pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        ff_rat_ids, ff_rat_tokens = get_rationales(self.tokenizer, input_ids, z_1, batch["lengths"])
+        ff_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
 
         # get counterfactuals
         gen_ids = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-        if 't5' not in self.cf_gen_arch:
-            import ipdb; ipdb.set_trace()
+        if 't5' not in self.cf_gen_arch and 'seq2seq' not in self.cf_supervision:
             z_1 = (z_tilde > 0).long()
             gen_ids = z_1 * gen_ids + (1 - z_1) * cf_input_ids
-        cfs = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
+        cf_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
         cf_lengths = (gen_ids != constants.PAD_ID).long().sum(-1).tolist()
 
         # output to be stacked across iterations
@@ -1090,15 +1099,15 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             f"{prefix}_cf_sum_loss": cf_loss.item(),
             f"{prefix}_ff_ps": ff_loss_stats[prefix + "_ps"],
             f"{prefix}_cf_ps": cf_loss_stats[prefix + "_cf_ps"],
-            f"{prefix}_ids_rationales": ids_rationales,
-            f"{prefix}_rationales": rationales,
-            f"{prefix}_pieces": pieces,
+            f"{prefix}_ids_rationales": ff_rat_ids,
+            f"{prefix}_rationales": ff_rat_tokens,
+            f"{prefix}_pieces": ff_tokens,
             f"{prefix}_tokens": batch["tokens"],
             f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": y.tolist(),
             f"{prefix}_lengths": batch["lengths"].tolist(),
-            f"{prefix}_cfs": cfs,
+            f"{prefix}_cfs": cf_tokens,
             f"{prefix}_cf_labels": y_tilde.tolist(),
             f"{prefix}_cf_predictions": y_tilde_hat,
             f"{prefix}_cf_z": z_tilde,
@@ -1123,20 +1132,16 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         # assume that `outputs` is a list containing dicts with the same keys
         stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
+        # sample a few examples to be logged in wandb
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        shuffle(idxs)
+        idxs = idxs[:10] if prefix != 'test' else idxs[:100]
+
         # useful functions
         select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
 
-        # sample a few examples to be logged in wandb
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
         if self.log_rationales_in_wandb:
-            if prefix != 'test':
-                shuffle(idxs)
-                idxs = idxs[:10]
-            else:
-                shuffle(idxs)
-                idxs = idxs[:100]
-
             # log rationales
             pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
             scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))

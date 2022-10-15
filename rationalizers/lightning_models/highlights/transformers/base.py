@@ -208,6 +208,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         ff_params = chain(
             self.ff_gen_emb_layer.parameters(),
             self.ff_gen_encoder.parameters(),
+            self.ff_gen_decoder.parameters() if self.ff_gen_decoder is not None else [],
             self.ff_pred_emb_layer.parameters() if not self.ff_shared_gen_pred else [],
             self.ff_pred_encoder.parameters() if not self.ff_shared_gen_pred else [],
             self.ff_output_layer.parameters(),
@@ -500,19 +501,17 @@ class TransformerBaseRationalizer(BaseRationalizer):
         # assume that `outputs` is a list containing dicts with the same keys
         stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
+        # sample a few examples to be logged in wandb
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        shuffle(idxs)
+        idxs = idxs[:10] if prefix != 'test' else idxs[:100]
+
         # useful functions
         select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
 
         # log rationales
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
         if self.log_rationales_in_wandb:
-            if prefix != 'test':
-                shuffle(idxs)
-                idxs = idxs[:10]
-            else:
-                shuffle(idxs)
-                idxs = idxs[:100]
             pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
             scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
             gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))

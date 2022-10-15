@@ -42,6 +42,8 @@ class BaseRationalizer(pl.LightningModule):
         self.is_multilabel = is_multilabel
         # whether we should log rationales in wandb
         self.log_rationales_in_wandb = True
+        # prefix is used to know whether we are training, testing or validating
+        self.stage = None
 
         # define metrics
         if self.is_multilabel:
