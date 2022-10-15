@@ -45,13 +45,13 @@ train:
     # factual_ckpt: null
     # load_tokenizer: False
     # load_label_encoder: True
-    tokenizer: 'roberta-base'
-    gen_arch: 'roberta-base'
+    tokenizer: 't5-small'
+    gen_arch: 't5-small'
     gen_emb_requires_grad: False
     gen_encoder_requires_grad: False
     gen_use_decoder: False
     pred_emb_requires_grad: False
-    pred_arch: 'roberta-base'
+    pred_arch: 't5-small'
     pred_bidirectional: False
     pred_encoder_requires_grad: True
     pred_output_requires_grad: True

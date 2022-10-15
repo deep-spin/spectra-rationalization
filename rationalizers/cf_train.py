@@ -21,6 +21,9 @@ shell_logger = logging.getLogger(__name__)
 def run(args):
     dict_args = vars(args)
 
+    shell_logger.info("Building board loggers...")
+    logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)
+
     tokenizer = None
     if args.tokenizer is not None:
         shell_logger.info("Loading tokenizer: {}...".format(args.tokenizer))
@@ -44,9 +47,6 @@ def run(args):
     if dm.tokenizer is None:
         dm.prepare_data()
         dm.setup()
-
-    shell_logger.info("Building board loggers...")
-    logger = setup_wandb_logger(args.default_root_dir, project=args.wandb_project, entity=args.wandb_entity)
 
     if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:
         shell_logger.info("Building model: {}...".format(args.model))
@@ -156,10 +156,7 @@ def run(args):
     log_final_outputs(outputs, flow_name=None, prefix_name=None)
 
     # log the best model path
-    if "ckpt" in dict_args.keys() and dict_args["ckpt"] is not None:
-        logger.log_hyperparams({'best_model_path': args.ckpt})
-    else:
-        logger.log_hyperparams({'best_model_path': checkpoint_callback.best_model_path})
+    logger.log_hyperparams({'best_model_path': checkpoint_callback.best_model_path})
 
     # bye bye
     shell_logger.info("Bye bye!")
