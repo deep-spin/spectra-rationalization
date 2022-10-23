@@ -26,6 +26,11 @@ if __name__ == "__main__":
         default=None,
         help="Random seed. If not specified, will be read from config file.",
     )
+    parser.add_argument(
+        "--no-fit",
+        action='store_true',
+        help="Whether to disable model fitting during training. Useful for evaluation.",
+    )
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
@@ -34,6 +39,7 @@ if __name__ == "__main__":
     general_dict = {
         "seed": yaml_config_dict["seed"] if tmp_args.seed is None else tmp_args.seed,
         "default_root_dir": yaml_config_dict["default_root_dir"],
+        "no_fit": tmp_args.no_fit,
     }
 
     # define args for each task
