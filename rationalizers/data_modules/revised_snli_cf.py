@@ -60,6 +60,8 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
             append_sos=False,
             append_eos=False,
         )
+        self.sep_token = self.tokenizer.sep_token or self.tokenizer.eos_token
+        self.sep_token_id = self.tokenizer.sep_token_id or self.tokenizer.eos_token_id
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         """
@@ -199,26 +201,35 @@ class CounterfactualRevisedSNLIDataModule(BaseDataModule):
                         truncation=True,  # truncate to max length accepted by the model
                     )
                     example["input_ids"] = input_enc["input_ids"]
-                    example["token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                    if 'token_type_ids' in input_enc:
+                        example["token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
+                    else:
+                        example["token_type_ids"] = 1 - torch.cumprod(
+                            torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+
                     input_enc = self.tokenizer(
                         example["cf_prem"].strip(), example["cf_hyp"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
                     example["cf_input_ids"] = input_enc["input_ids"]
-                    example["cf_token_type_ids"] = torch.as_tensor(input_enc["token_type_ids"])
+                    if 'token_type_ids' in input_enc:
+                        example["cf_token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
+                    else:
+                        example["cf_token_type_ids"] = 1 - torch.cumprod(
+                            torch.tensor(example["cf_input_ids"]) != self.sep_token_id, dim=0)
                 else:
                     sep_id = self.tokenizer.token_to_index[constants.SEP]
                     example["input_ids"] = self.tokenizer.encode(
                         example["prem"].strip() + ' ' + constants.SEP + ' ' + example["hyp"].strip()
                     )
-                    example["token_type_ids"] = torch.cumprod(
+                    example["token_type_ids"] = 1 - torch.cumprod(
                         torch.as_tensor(example["input_ids"]) != sep_id, dim=0
                     )
                     example["cf_input_ids"] = self.tokenizer.encode(
                         example["cf_prem"].strip() + ' ' + constants.SEP + ' ' + example["cf_hyp"].strip()
                     )
-                    example["cf_token_type_ids"] = torch.cumprod(
+                    example["cf_token_type_ids"] = 1 - torch.cumprod(
                         torch.as_tensor(example["cf_input_ids"]) != sep_id, dim=0
                     )
             else:
