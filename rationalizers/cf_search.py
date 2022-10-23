@@ -5,20 +5,18 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 from transformers import AutoTokenizer
 import datasets as hf_datasets
-import optuna
 
 from rationalizers import constants
 from rationalizers.data_modules import available_data_modules
 from rationalizers.lightning_models import available_models
-from rationalizers.utils import (
-    setup_wandb_logger,
-    load_torch_object
-)
+from rationalizers.utils import load_torch_object
 
 shell_logger = logging.getLogger(__name__)
 
 
 def run(args):
+    import optuna
+
     dict_args = vars(args)
 
     tokenizer = None
