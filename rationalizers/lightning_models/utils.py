@@ -3,6 +3,93 @@ import torch
 from transformers import top_k_top_p_filtering
 
 
+def get_t5_sentinel_ids(idx_a=32000, idx_b=32099):
+    return list(range(idx_a, idx_b + 1))
+
+
+def is_sentinel(x, idx_a=32000, idx_b=32099):
+    return (x >= idx_a) & (x <= idx_b)
+
+
+def fix_t5_generated_inputs(gen_ids, pad_id=0):
+    """
+    Fix T5 generated inputs by removing repeated sentinel tokens
+    :param gen_ids: torch.LongTensor [B, T]
+    :param pad_id: padding id
+    """
+    new_gen_ids = []
+    for i in range(len(gen_ids)):
+        is_sent = is_sentinel(gen_ids[i])
+        is_fused = gen_ids[i] == gen_ids[i].roll(-1, dims=-1)
+        valid_ids = gen_ids[i][~(is_sent & is_fused)]
+        new_gen_ids.append(valid_ids)
+    new_gen_ids = torch.nn.utils.rnn.pad_sequence(new_gen_ids, batch_first=True, padding_value=pad_id)
+    new_gen_ids = new_gen_ids.to(gen_ids.device)
+    return new_gen_ids
+
+
+def get_mask_from_lengths(lengths):
+    """
+    Get a mask from lengths
+    :param lengths: torch.LongTensor [B]
+    :return: mask, torch.BoolTensor [B, T]
+    """
+    max_len = lengths.max().item()
+    mask = torch.arange(max_len, device=lengths.device).expand(len(lengths), -1) < lengths.unsqueeze(-1)
+    return mask
+
+
+def add_end_of_chunk_tokens_to_t5_input(x, z, mask, pad_id=0, eoc_id=32101):
+    """
+    Add end of chunk token to the end of each chunk
+
+    :param x: input sequence, torch.FloatTensor [B, T]
+    :param z: latent selection vector torch.FloarTensor [B, T]
+    :param mask: mask for padding positions, torch.BoolTensor [B, T]
+    :param pad_id: padding id
+    :param eoc_id: end of chunk id
+    :return: t5_x: new input ids for T5, torch.FloatTensor [B, T'],
+             t5_z: new latent selection vector, torch.FloatTensor [B, T']
+             t5_mask: new mask for padding positions, torch.BoolTensor [B, T']
+    """
+    batch_size = x.shape[0]
+    seq_len = x.shape[1]
+    x_is_sentinel = is_sentinel(x).long()
+    max_num_sentinels = x_is_sentinel.sum(-1).max().item()
+
+    x_eoc = torch.zeros(batch_size, max_num_sentinels, dtype=x.dtype, device=x.device) + eoc_id
+    z_eoc = torch.ones(batch_size, max_num_sentinels, dtype=z.dtype, device=z.device)
+
+    x_new = torch.cat([x, x_eoc], dim=-1)
+    z_new = torch.cat([z, z_eoc], dim=-1)
+
+    ordering_ori = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
+    ordering_eoc = torch.ones(batch_size, max_num_sentinels).long() * 999999
+    for i in range(batch_size):
+        nz = (is_sentinel(x[i])).long().nonzero()[:, 0]
+        nz = nz[nz > 0]
+        ordering_eoc[i, :len(nz)] = nz
+
+    ordering = torch.cat([ordering_ori, ordering_eoc - 0.5], dim=-1)
+    _, idxs = torch.sort(ordering, dim=-1, descending=False, stable=True)
+    x_new = x_new.gather(1, idxs)
+    z_new = z_new.gather(1, idxs)
+
+    lengths = mask.long().sum(-1)
+    lengths_new = lengths + x_is_sentinel.long().sum(-1)
+    mask_new = get_mask_from_lengths(lengths_new)
+
+    x_new = x_new.masked_fill(~mask_new, pad_id)
+    z_new = z_new.masked_fill(~mask_new, 0)
+
+    return x_new, z_new, mask_new
+
+
+def make_input_for_ct5(x, e, z, mask, pad_id=0):
+    t5_x, t5_e, t5_z, t5_mask = make_input_for_t5(x, e, z, mask, pad_id=pad_id)
+    return add_end_of_chunk_tokens_to_t5_input(t5_x, t5_z, t5_mask, pad_id=pad_id)
+
+
 def make_input_for_t5(x, e, z, mask, pad_id=0):
     """
     Replace masked positions by sentinel tokens
@@ -71,7 +158,46 @@ def make_input_for_t5(x, e, z, mask, pad_id=0):
     t5_z = t5_z[:, :max_len]
     t5_mask = t5_mask[:, :max_len]
 
+    # clamp valid input ids (might glue last generations as T5 has only 100 sentinels)
+    t5_z_pos = (t5_z > 0).long()
+    sentinel_ids = torch.clamp(32100 - t5_z_pos.cumsum(dim=-1), min=32000, max=32099)
+    # fix x by replacing selected tokens by sentinel ids
+    t5_x = t5_z_pos * sentinel_ids + (1 - t5_z_pos) * t5_x
+
     return t5_x, t5_e, t5_z, t5_mask
+
+
+def merge_inputs_for_t5(x, x_tilde, z, pad_id=0, eos_id=1, prefix_len=0, max_len=None):
+    # get the counts needed to expand the input_ids into generated_ids
+    gen_counts = get_new_frequencies_of_gen_ids_from_t5(x, x_tilde, pad_id=pad_id, eos_id=eos_id)
+    # and vice-versa
+    inp_counts = get_new_frequencies_of_gen_ids_from_t5(x_tilde, x, pad_id=pad_id, eos_id=eos_id)
+
+    # expand x and z according to gen_counts
+    x_rep = repeat_interleave_and_pad(x, gen_counts, pad_id=pad_id)
+    z_tilde = repeat_interleave_and_pad(z, gen_counts, pad_id=pad_id)
+
+    # expand x_tilde according to inp_counts
+    x_tilde_rep = repeat_interleave_and_pad(x_tilde, inp_counts)
+
+    # merge x_rep and x_tilde_rep into a single tensor
+    x_tilde = merge_input_and_gen_ids(x_rep, x_tilde_rep, pad_id=pad_id)
+
+    # fix the corner case of generating fewer tokens than what was selected
+    original_seq_len = z_tilde.shape[-1]
+    expanded_seq_len = x_tilde.shape[-1]
+    if original_seq_len > expanded_seq_len:
+        z_tilde = z_tilde[:, :expanded_seq_len]
+
+    # remove labels in case they were prepended
+    x_tilde = x_tilde[:, prefix_len:]
+    z_tilde = z_tilde[:, prefix_len:]
+
+    # if we generated too much, there isn't much we can do besides truncating
+    x_tilde = x_tilde[:, :max_len]
+    z_tilde = z_tilde[:, :max_len]
+
+    return x_tilde, z_tilde
 
 
 def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx_a=32000, idx_b=32099):
@@ -201,6 +327,69 @@ def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32
     merged_ids_rep = merged_ids_rep[:, :new_max_len]
 
     return merged_ids_rep
+
+
+def prepend_label_for_t5(x, y, z, mask, tokenizer, max_length=None, task_name='binary_classification'):
+    """
+    Prepend a label to the generated ids for T5 using the following format:
+    `<LABEL>: <TOKENS>`
+
+    :param y: labels, tensor of shape [B]
+    :param x: input ids, tensor of shape [B, T]
+    :param z: latent selections, tensor of shape [B, T]
+    :param mask: input mask, tensor of shape [B, T]
+    :param tokenizer: tokenizer instance
+    :param max_length: maximum length of the input
+    :param task_name: binary classification or nli
+    :return:
+        x_cf: tensors of shape [B, T + 2] with the prepended label template
+        z_cf: tensors of shape [B, T + 2] with prepended `0s`
+        mask_cf: tensors of shape [B, T + 2] with prepended `1s`
+    """
+    batch_size = y.shape[0]
+
+    # manually create the ids of the template:
+    prefix_ids_pos = torch.tensor(tokenizer.encode('positive:', add_special_tokens=False), device=y.device)
+    prefix_ids_neg = torch.tensor(tokenizer.encode('negative:', add_special_tokens=False), device=y.device)
+    prefix_ids_neu = torch.tensor(tokenizer.encode('neutral:', add_special_tokens=False), device=y.device)
+
+    if task_name == 'binary_classification' or task_name == 'qe':
+        prefix_ids = torch.where(
+            y.unsqueeze(-1) == 0,
+            prefix_ids_neg.unsqueeze(0).expand(batch_size, -1),
+            prefix_ids_pos.unsqueeze(0).expand(batch_size, -1)
+        )
+    elif task_name == 'nli':
+        prefix_ids = torch.where(
+            y.unsqueeze(-1) == 0,
+            prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),
+            torch.where(
+                y.unsqueeze(-1) == 1,
+                prefix_ids_neu.unsqueeze(0).expand(batch_size, -1),
+                prefix_ids_neg.unsqueeze(0).expand(batch_size, -1)
+            )
+        )
+    else:
+        raise NotImplementedError
+
+    # prepend prefix to the input (and cap if necessary)
+    x_cf = torch.cat((prefix_ids, x), dim=1)
+    x_cf = x_cf[:, :max_length] if max_length is not None else x_cf
+
+    # and also deal with z and mask
+    z_cf = None
+    if z is not None:
+        prefix_zeros = torch.zeros_like(prefix_ids)
+        z_cf = torch.cat((prefix_zeros.to(z.dtype), z), dim=1)
+        z_cf = z_cf[:, :max_length] if max_length is not None else z_cf
+
+    mask_cf = None
+    if mask is not None:
+        prefix_ones = torch.ones_like(prefix_ids)
+        mask_cf = torch.cat((prefix_ones.to(mask.dtype), mask), dim=1)
+        mask_cf = mask_cf[:, :max_length] if max_length is not None else mask_cf
+
+    return x_cf, z_cf, mask_cf
 
 
 def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, tokenizer, task='imdb'):
