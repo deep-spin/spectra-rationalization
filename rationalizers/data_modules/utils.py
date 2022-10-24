@@ -124,7 +124,7 @@ def remap_input_to_cf_vocab_brute_force(bert_tokenizer, t5_tokenizer, x, z, mask
     return x_new_pt, z_new_pt, mask_new_pt.bool()
 
 
-def concat_sequences(src_ids, mt_ids):
+def concat_sequences(input_ids_1, input_ids_2):
     """
     Concatenates the input sequences.
     """
@@ -133,8 +133,11 @@ def concat_sequences(src_ids, mt_ids):
     # So the concatenation will result in:
     # <bos> <mt> <eos> <bos> <src> <eos> <bos> <ref> <eos> ...
     # for some model, <bos> and <eos> might be None, so they are not concatenated.
-    x1 = torch.as_tensor(mt_ids)
-    x2 = torch.as_tensor(src_ids)
+    x1 = torch.as_tensor(input_ids_1)
+    x2 = torch.as_tensor(input_ids_2)
+    z1 = torch.zeros_like(x1)
+    z2 = torch.ones_like(x2)
     input_ids = torch.cat([x1, x2], dim=-1)
-    token_type_ids = torch.cat([torch.zeros_like(x1), torch.ones_like(x2)], dim=-1)
+    z1[-1] = 1  # set the last token to be part of the second sequence
+    token_type_ids = torch.cat([z1, z2], dim=-1)
     return input_ids, token_type_ids
