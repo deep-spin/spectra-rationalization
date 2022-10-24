@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+from pprint import pformat
 
 import numpy as np
 import pytorch_lightning as pl
@@ -44,49 +45,11 @@ class BaseRationalizer(pl.LightningModule):
         self.log_rationales_in_wandb = True
         # prefix is used to know whether we are training, testing or validating
         self.stage = None
-
-        # define metrics
-        if self.is_multilabel:
-            self.train_accuracy = torchmetrics.Accuracy()
-            self.val_accuracy = torchmetrics.Accuracy()
-            self.test_accuracy = torchmetrics.Accuracy()
-            self.train_precision = torchmetrics.Precision(
-                num_classes=nb_classes, average="macro"
-            )
-            self.val_precision = torchmetrics.Precision(
-                num_classes=nb_classes, average="macro"
-            )
-            self.test_precision = torchmetrics.Precision(
-                num_classes=nb_classes, average="macro"
-            )
-            self.train_recall = torchmetrics.Recall(
-                num_classes=nb_classes, average="macro"
-            )
-            self.val_recall = torchmetrics.Recall(num_classes=nb_classes, average="macro")
-            self.test_recall = torchmetrics.Recall(
-                num_classes=nb_classes, average="macro"
-            )
-
-        # define loss function
-        criterion_cls = nn.MSELoss if not self.is_multilabel else nn.NLLLoss
-        self.criterion = criterion_cls(reduction="none")
-
-        # model arch:
+        # define vocab size
         self.vocab_size = tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else len(tokenizer)
-        self.emb_type = h_params.get("emb_type", "random")
-        self.emb_path = h_params.get("emb_path", None)
-        self.emb_size = h_params.get("emb_size", 300)
-        self.emb_requires_grad = not h_params.get("embed_fixed", True)
-        self.hidden_size = h_params.get("hidden_size", 150)
-        self.dropout = h_params.get("dropout", 0.5)
-        self.sentence_encoder_layer_type = h_params.get(
-            "sentence_encoder_layer_type", "rcnn"
-        )
-        self.predicting = h_params.get("predicting", False)
-
         # save hyperparams to be accessed via self.hparams
         self.save_hyperparameters(h_params)
-        shell_logger.info(h_params)
+        shell_logger.info(pformat(h_params))
 
     def forward(
         self, x: torch.LongTensor, current_epoch=None, mask: torch.BoolTensor = None
