@@ -292,11 +292,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             self.lm_model.eval()
             freeze_module(self.lm_model)
 
-        # remove leftover from the base class
-        del self.train_accuracy, self.val_accuracy, self.test_accuracy
-        del self.train_precision, self.val_precision, self.test_precision
-        del self.train_recall, self.val_recall, self.test_recall
-
         ########################
         # logging
         ########################
@@ -536,10 +531,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
             x, e, z, mask = make_input_for_t5(x, e, z, mask, pad_id=constants.PAD_ID)
             # create sentinel tokens
             sentinel_ids = 32100 - (z > 0).long().cumsum(dim=-1)
-            # clamp valid input ids (might glue last generations as T5 has only 100 sentinels)
-            sentinel_ids = torch.clamp(sentinel_ids, min=32000, max=32099)
-            # fix x by replacing selected tokens by sentinel ids
-            x = (z > 0).long() * sentinel_ids + (z == 0).long() * x
             # get sentinel embeddings
             e_mask = self.cf_gen_emb_layer(sentinel_ids)
         else:
@@ -666,10 +657,6 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
                 # so we cut it out for all samples in the batch
                 # (this happens only for .sequences)
                 x_tilde = gen_out.sequences[:, 1:]
-
-                # check forward and backward values match
-                import ipdb; ipdb.set_trace()
-                logits = gen_out.scores
 
                 # get the logits for x_tilde
                 cf_gen_dec_out = self.cf_gen_decoder(
