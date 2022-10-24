@@ -33,21 +33,20 @@ train:
     # pytorch-lightning rationalizer model
     model: 'transformer_spectra_cf'
 
-    # checkpointing
+    # factual flow
     # ckpt: null
-    # experiments/cfrat-revised-imdb-sparsemap-orig-transformer/version2tw9c5dp/checkpoints/epoch=9.ckpt
-    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-orig-transformer/versionq6jjj9pn/checkpoints/epoch=4.ckpt
+#    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-orig-transformer/version2lwtsp29/checkpoints/epoch=9.ckpt
+    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-orig-transformer/versionyws3xul8/checkpoints/epoch=5.ckpt
     load_tokenizer: False
     load_label_encoder: False
 
-    # factual flow
-    tokenizer: 'roberta-base'
-    gen_arch: 'roberta-base'
+    tokenizer: 't5-small'
+    gen_arch: 't5-small'
     gen_emb_requires_grad: False
     gen_encoder_requires_grad: False
     gen_use_decoder: False
     pred_emb_requires_grad: False
-    pred_arch: 'roberta-base'
+    pred_arch: 't5-small'
     pred_bidirectional: False
     pred_encoder_requires_grad: True
     pred_output_requires_grad: True
@@ -65,19 +64,17 @@ train:
     selection_mask: False
     temperature: 1.0
 
+    # supervision
+    cf_manual_sample: True
+
     # counterfactual flow
-    cf_tokenizer: 'bert-base-cased'
-    cf_gen_arch: "bert-base-cased"
+    cf_tokenizer: 't5-small'
+    cf_gen_arch: "t5-small"
     cf_gen_emb_requires_grad: False
     cf_gen_encoder_requires_grad: False
     cf_gen_lm_head_requires_grad: True
     cf_dropout: 0.1
     cf_input_space: 'embedding'
-    cf_selection_vector: 'zero'
-    cf_selection_mask: False
-    cf_selection_faithfulness: True
-    cf_selection_mode: 'none'
-    cf_manual_sample: True
     cf_use_reinforce: False
     cf_use_reinforce_baseline: False
     cf_prepend_label_for_mice: False
@@ -100,11 +97,11 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
-    cf_lr: 0.00001
+    lr: 0.0001
+    cf_lr: 0.0001
     ff_lbda: 1.0
     cf_lbda: 5.0
-    weight_decay: 0.0
+    weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False
     momentum: 0.0

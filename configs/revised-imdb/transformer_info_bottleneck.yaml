@@ -60,8 +60,8 @@ train:
     explainer_relaxed: True
     explainer_pre_mlp: True
     explainer_requires_grad: True
-    prior_penalty: 100.0
-    explainer_prior: 0.35
+    prior_penalty: 75.0
+    explainer_prior: 0.3
     explainer_temperature: 0.1
     dropout: 0.1
     selection_space: 'embedding'
@@ -72,7 +72,7 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
+    lr: 0.0001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False

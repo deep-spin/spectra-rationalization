@@ -25,13 +25,6 @@ train:
     # max_dataset_size: 64          # for quick testing
     is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
 
-    original_dataset: 'imdb'        # original dataset name (see docs for more options)
-    original_dataset_kwargs:
-        batch_size: 8
-        num_workers: 1
-        vocab_min_occurrences: 1
-        max_seq_len: 512
-
     # early stopping
     monitor: 'val_cf_accuracy'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
@@ -80,10 +73,6 @@ train:
     cf_gen_lm_head_requires_grad: True
     cf_dropout: 0.1
     cf_input_space: 'embedding'
-    cf_selection_vector: 'zero'
-    cf_selection_mask: False
-    cf_selection_faithfulness: True
-    cf_selection_mode: 'none'
     cf_use_reinforce: False
     cf_use_reinforce_baseline: False
     cf_prepend_label_for_mice: False
@@ -106,8 +95,8 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
-    cf_lr: 0.00001
+    lr: 0.0001
+    cf_lr: 0.0001
     ff_lbda: 1.0
     cf_lbda: 1.0
     weight_decay: 0.000001

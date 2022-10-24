@@ -1,6 +1,6 @@
 # general args
-seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-imdb-hardkuma-transformer/'  # path to save logs and models
+seed: 0    # for reproducibility
+default_root_dir: 'experiments/cfrat-editor-t5/'  # path to save logs and models
 
 
 # training args
@@ -17,67 +17,82 @@ train:
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'revised_imdb'              # data module name (see docs for more options)
+    dm: 'imdb'              # data module name (see docs for more options)
     batch_size: 8                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     max_seq_len: 512                # pretrained transformer limitation
     # max_dataset_size: 64          # for quick testing
-    is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
-
-    original_dataset: 'imdb'        # original dataset name (see docs for more options)
-    original_dataset_kwargs:
-        batch_size: 8
-        num_workers: 1
-        vocab_min_occurrences: 1
-        max_seq_len: 512
+    # is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
 
     # early stopping
-    monitor: 'val_cf_accuracy'     # quantity to be monitored
-    monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
+    monitor: 'val_sum_loss'     # quantity to be monitored
+    monitor_mode: 'min'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'transformer_hardkuma'
+    model: 'editor'
 
     # factual flow
     # ckpt: null
-    # factual_ckpt: null
-    # load_tokenizer: False
-    # load_label_encoder: True
+
+    # 10% (remember to change sparsemap_budget below)
+    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
+    # 15%
+    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version3o2koucn/checkpoints/epoch=6.ckpt
+    # 20%
+    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version23c7nfo1/checkpoints/epoch=8.ckpt
+
+    load_tokenizer: False
+    load_label_encoder: False
     tokenizer: 't5-small'
     gen_arch: 't5-small'
     gen_emb_requires_grad: False
     gen_encoder_requires_grad: False
     gen_use_decoder: False
-    pred_emb_requires_grad: False
     pred_arch: 't5-small'
-    pred_bidirectional: False
-    pred_encoder_requires_grad: True
-    pred_output_requires_grad: True
+    pred_emb_requires_grad: False
+    pred_encoder_requires_grad: False
+    pred_output_requires_grad: False
     shared_gen_pred: False
-    explainer: 'hardkuma'
-    explainer_relaxed: False
+    explainer: 'sparsemap'
     explainer_pre_mlp: True
-    explainer_requires_grad: True
-    explainer_temperature: 0.0001
-    hardkuma_lagrange_lr: 0.01
-    hardkuma_alpha: 0.99
-    hardkuma_lambda_init: 0.04
-    hardkuma_lambda_min: 0.04
-    hardkuma_lambda_max: 0.04
-#    hardkuma_lagrange_lr: 0.05
-#    hardkuma_alpha: 0.1
-#    hardkuma_lambda_init: 0.0001
-#    hardkuma_lambda_min: 0.000001
-#    hardkuma_lambda_max: 1
-    sparsity_penalty: 0.1
-    contiguity_penalty: 0.0
+    explainer_requires_grad: False
+    explainer_mask_token_type_id: 0
+    sparsemap_budget: 10
+    sparsemap_temperature: 0.01
+    sparsemap_transition: 0.0001
     dropout: 0.1
     selection_space: 'embedding'
     selection_vector: 'zero'
     selection_faithfulness: True
     selection_mask: False
+    temperature: 1.0
+
+    # editor
+    cf_gen_arch: "t5-base"
+    cf_prepend_label_type: "gold"
+    cf_z_type: "pred"
+    cf_task_name: "binary_classification"
+
+    # https://huggingface.co/docs/transformers/v4.23.1/en/main_classes/text_generation#transformers.generation_utils.GenerationMixin.generate
+    cf_generate_kwargs:
+        do_sample: False            # deterministic or stochastic generation
+        num_beams: 15               # mice: 15
+        num_beam_groups: 1          # to promote diversity in beam groups
+        early_stopping: True        # stop search when >= num_beams sentences are done (default: False | mice: True)
+        length_penalty: 1.0         # (<1) means shorter sequences, (>1) longer sequences
+        top_k: 30                   # default: 50  | mice: 30
+        top_p: 0.95                 # default: 1.0 | mice: 0.95
+        typical_p: null             # default: 1.0
+        no_repeat_ngram_size: 2     # no bigrams repetitions are allowed (default: 0 | mice: 2)
+        num_return_sequences: 1     # sample N sequences
+        min_length: null            # minimum length of the generated sequence
+        max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)
+    penalty_seq2seq: 1.0
+    penalty_similarity: 1.0
+    penalty_diversity: 1.0
+    penalty_fluency: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
