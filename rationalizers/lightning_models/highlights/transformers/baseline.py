@@ -8,8 +8,8 @@ shell_logger = logging.getLogger(__name__)
 
 class TransformerBaselineClassifier(TransformerBaseRationalizer):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, tokenizer: object, nb_classes: int, is_multilabel: bool, h_params: dict):
+        super().__init__(tokenizer, nb_classes, is_multilabel, h_params)
         assert self.ff_pred_arch == 'masked_average'
 
     def get_factual_flow(self, x, mask=None, token_type_ids=None, z=None):
