@@ -14,6 +14,7 @@ from rationalizers.lightning_models.highlights.transformers.baseline import Tran
 from rationalizers.lightning_models.matchings.faithful_sparsemap_matching import SparseMAPFaithfulMatching
 from rationalizers.lightning_models.matchings.gumbel_matching import GumbelMatching
 from rationalizers.lightning_models.matchings.esim_matching import ESIMMatching
+from rationalizers.lightning_models.edits.base import BaseEditor
 
 available_models = {
     "bernoulli": BernoulliRationalizer,
@@ -32,4 +33,5 @@ available_models = {
     "transformer_hardkuma": TransformerHardKumaRationalizer,
     "transformer_info_bottleneck": TransformerInfoBottleneckRationalizer,
     "transformer_baseline": TransformerBaselineClassifier,
+    "editor": BaseEditor,
 }
