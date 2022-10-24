@@ -468,7 +468,6 @@ class TransformerBaseRationalizer(BaseRationalizer):
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
             f"{prefix}_pieces": pieces,
-            f"{prefix}_tokens": batch["tokens"],
             f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": y.tolist(),

@@ -23,16 +23,23 @@ class MLQEPEDataModule(BaseDataModule):
         super().__init__(d_params)
         # hard-coded stuff
         self.path = "./rationalizers/custom_hf_datasets/mlqepe.py"
-        self.is_multilabel = False
-        self.nb_classes = 1
 
         # hyperparams
-        self.lp = d_params.get("lp", "en-de")
+        self.lp = d_params.get("lp", "all-all")
         self.use_hter_as_label = d_params.get("use_hter_as_label", False)
+        self.transform_scores_to_labels = d_params.get("transform_scores_to_labels", False)
         self.batch_size = d_params.get("batch_size", 32)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
+
+        # fix nb classes
+        if self.transform_scores_to_labels:
+            self.is_multilabel = True
+            self.nb_classes = 2
+        else:
+            self.is_multilabel = False
+            self.nb_classes = 1
 
         # objects
         self.dataset = None
@@ -56,6 +63,8 @@ class MLQEPEDataModule(BaseDataModule):
             append_sos=False,
             append_eos=False,
         )
+        self.sep_token = self.tokenizer.sep_token or self.tokenizer.eos_token
+        self.bos_token = self.tokenizer.bos_token or self.tokenizer.sep_token
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         """
@@ -70,8 +79,8 @@ class MLQEPEDataModule(BaseDataModule):
         # convert list of dicts to dict of lists
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
-        def pad_and_stack_ids(x):
-            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+        def pad_and_stack_ids(x, pad_id=constants.PAD_ID):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=pad_id)
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -81,18 +90,23 @@ class MLQEPEDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
-        token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"])
+        token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"], pad_id=2)
 
         # stack labels
         if self.use_hter_as_label:
             labels = stack_labels(collated_samples["hter"])
+            if self.transform_scores_to_labels:
+                labels = ((labels >= 0.30) & (labels <= 1.0)).long()
         else:
             labels = stack_labels(collated_samples["da"])
+            if self.transform_scores_to_labels:
+                labels = (labels <= 70).long()
 
         # keep tokens in raw format
         src_tokens = collated_samples["src"]
         mt_tokens = collated_samples["mt"]
-        pe_tokens = collated_samples["pe_tokens"]
+        pe_tokens = collated_samples["pe"]
+        tokens = [y.strip() + f' {self.sep_token} {self.bos_token} ' + x.strip() for y, x in zip(mt_tokens, src_tokens)]
 
         # metadata useful for evaluation
         src_tags = collated_samples["src_tags"]
@@ -105,6 +119,7 @@ class MLQEPEDataModule(BaseDataModule):
             "token_type_ids": token_type_ids,
             "lengths": lengths,
             "labels": labels,
+            "tokens": tokens,
             "src_tokens": src_tokens,
             "mt_tokens": mt_tokens,
             "pe_tokens": pe_tokens,
@@ -143,16 +158,18 @@ class MLQEPEDataModule(BaseDataModule):
                     example["src"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
+                    max_length=512,
                 )["input_ids"]
                 mt_ids = self.tokenizer(
                     example["mt"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
+                    max_length=512,
                 )["input_ids"]
             else:
                 src_ids = self.tokenizer.encode(example["src"].strip())
                 mt_ids = self.tokenizer.encode(example["mt"].strip())
-            input_ids, token_type_ids = concat_sequences(src_ids, mt_ids)
+            input_ids, token_type_ids = concat_sequences(mt_ids, src_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids
             return example

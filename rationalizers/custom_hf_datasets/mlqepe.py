@@ -24,6 +24,18 @@ This dataset contains src, mt, da & hter scores for 11 language pairs
 
 _URL_DA = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/direct-assessments/"
 _URL_WL = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/post-editing/"
+_URLS_ALL = {
+    "all-all": "https://www.dropbox.com/s/l4cfluvnujqk79l/all-all.tar.gz?dl=1",
+    "all-en": "https://www.dropbox.com/s/aqltqwatgue5ttb/all-en.tar.gz?dl=1",
+    "en-all": "https://www.dropbox.com/s/yllyf0e5s38zta7/en-all.tar.gz?dl=1",
+    "en-de": "https://www.dropbox.com/s/piwwcoafzaaw0uj/en-de.tar.gz?dl=1",
+    "en-zh": "https://www.dropbox.com/s/m2jnyop19h7626a/en-zh.tar.gz?dl=1",
+    "et-en": "https://www.dropbox.com/s/0r0ku0mho4ubko4/et-en.tar.gz?dl=1",
+    "ne-en": "https://www.dropbox.com/s/bcgg2qwn8d32jiy/ne-en.tar.gz?dl=1",
+    "ro-en": "https://www.dropbox.com/s/mr5o4zu303rqrtb/ro-en.tar.gz?dl=1",
+    "ru-en": "https://www.dropbox.com/s/au85o8itm5ilyc4/ru-en.tar.gz?dl=1",
+    "si-en": "https://www.dropbox.com/s/yuq45rggqq7n0nr/si-en.tar.gz?dl=1",
+}
 # _URL_DA_AND_WL_21 = "https://github.com/sheffieldnlp/mlqe-pe/raw/master/data/test21_goldlabels/"
 
 
@@ -123,7 +135,8 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
             description="Samples from the MLQEPE dataset.",
             lp=lp,
         )
-        for lp in ["en-de", "en-zh", "et-en", "ne-en", "ro-en", "ru-en", "si-en", "en-cs", "en-ja", "km-en", "ps-en"]
+        for lp in ["all-all", "all-en", "en-all", "en-de", "en-zh", "et-en", "ne-en",
+                   "ro-en", "ru-en", "si-en", "en-cs", "en-ja", "km-en", "ps-en"]
     ]
 
     def _info(self):
@@ -160,17 +173,26 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
         if lp in ["en-cs", "en-ja", "km-en", "ps-en"]:
             raise Exception('Zero-shot LPs are not available yet.')
 
-        da_dirs = dl_manager.download_and_extract([_URL_DA + f'{s}/{lp}-{s}.tar.gz' for s in splits])
-        wl_dirs = dl_manager.download_and_extract([_URL_WL + f'{s}/{lp}-{s}.tar.gz' for s in splits])
+        if lp in _URLS_ALL.keys():
+            # if we have the dataset preprocessed in dropbox, use it
+            wl_dir = dl_manager.download_and_extract(_URLS_ALL[lp])
+            filepaths = {
+                "train": os.path.join(wl_dir, f'{lp}/train.tsv'),
+                "dev": os.path.join(wl_dir, f'{lp}/dev.tsv'),
+                "test": os.path.join(wl_dir, f'{lp}/test.tsv'),
+            }
 
-        for da_dir, wl_dir, split in zip(da_dirs, wl_dirs, splits):
-            move_da_to_post_editing_folder(da_dir, wl_dir, lp, split)
-
-        filepaths = {
-            "train": create_dataset(os.path.join(wl_dirs[0], f'{lp}-train/train')),
-            "dev": create_dataset(os.path.join(wl_dirs[1], f'{lp}-dev/dev')),
-            "test": create_dataset(os.path.join(wl_dirs[2], f'{lp}-test20/test20')),
-        }
+        else:
+            # otherwise download the raws from github and preprocess
+            da_dirs = dl_manager.download_and_extract([_URL_DA + f'{s}/{lp}-{s}.tar.gz' for s in splits])
+            wl_dirs = dl_manager.download_and_extract([_URL_WL + f'{s}/{lp}-{s}.tar.gz' for s in splits])
+            for da_dir, wl_dir, split in zip(da_dirs, wl_dirs, splits):
+                move_da_to_post_editing_folder(da_dir, wl_dir, lp, split)
+            filepaths = {
+                "train": create_dataset(os.path.join(wl_dirs[0], f'{lp}-train/train')),
+                "dev": create_dataset(os.path.join(wl_dirs[1], f'{lp}-dev/dev')),
+                "test": create_dataset(os.path.join(wl_dirs[2], f'{lp}-test20/test20')),
+            }
 
         return [
             datasets.SplitGenerator(
@@ -191,13 +213,18 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
         """Yields examples."""
         df = pd.read_csv(filepath, delimiter='\t')
         for i, row in df.iterrows():
+            src_mt_aligns = None
+            if 'src_mt_aligns' in df.columns:
+                src_mt_aligns = eval(row['src_mt_aligns'])
+            elif 'src_mt_alignments' in df.columns:
+                src_mt_aligns = eval(row['src_mt_alignments'])
             yield i, {
                 "src": row['src'],
                 "mt": row['mt'],
                 "pe": row['pe'],
                 "src_tags": eval(row['src_tags']),
                 "mt_tags": eval(row['mt_tags']),
-                "src_mt_aligns": eval(row['src_mt_aligns']),
+                "src_mt_aligns": src_mt_aligns,
                 "da": row['da'],
                 "hter": row['hter'],
             }

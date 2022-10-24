@@ -71,8 +71,8 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         # convert list of dicts to dict of lists
         collated_samples = collate_tensors(samples, stack_tensors=list)
 
-        def pad_and_stack_ids(x):
-            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=constants.PAD_ID)
+        def pad_and_stack_ids(x, pad_id=constants.PAD_ID):
+            x_ids, x_lengths = stack_and_pad_tensors(x, padding_index=pad_id)
             return x_ids, x_lengths
 
         def stack_labels(y):
@@ -82,7 +82,7 @@ class RevisedMLQEPEDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
-        token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"])
+        token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"], pad_id=2)
 
         # stack labels
         labels = stack_labels(collated_samples["label"])
@@ -146,7 +146,7 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             else:
                 src_ids = self.tokenizer.encode(example["src"].strip())
                 mt_ids = self.tokenizer.encode(example["mt"].strip())
-            input_ids, token_type_ids = concat_sequences(src_ids, mt_ids)
+            input_ids, token_type_ids = concat_sequences(mt_ids, src_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids
             return example
