@@ -79,6 +79,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self.ff_z_dist = None
         self.mask_token_id = tokenizer.mask_token_id
         self.pad_token_id = tokenizer.pad_token_id
+        self.eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
 
         ########################
         # build factual flow
@@ -178,11 +179,6 @@ class TransformerBaseRationalizer(BaseRationalizer):
         criterion_cls = nn.MSELoss if not self.is_multilabel else nn.NLLLoss
         self.ff_criterion = criterion_cls(reduction="none")
 
-        # remove leftover from the base class
-        del self.train_accuracy, self.val_accuracy, self.test_accuracy
-        del self.train_precision, self.val_precision, self.test_precision
-        del self.train_recall, self.val_recall, self.test_recall
-
         ########################
         # logging
         ########################
@@ -215,7 +211,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self,
         x: torch.LongTensor,
         mask: torch.BoolTensor = None,
-        token_type_ids: torch.BoolTensor = None,
+        token_type_ids: torch.LongTensor = None,
         current_epoch=None,
     ):
         """
@@ -223,7 +219,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         :param x: input ids tensor. torch.LongTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
-        :param token_type_ids: mask tensor for explanation positions. torch.BoolTensor of shape [B, T]
+        :param token_type_ids: mask tensor for explanation positions. torch.LongTensor of shape [B, T]
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
@@ -271,15 +267,24 @@ class TransformerBaseRationalizer(BaseRationalizer):
         # gen_h = torch.stack(gen_h)[selected_layers].mean(dim=0)
         gen_h = gen_h.last_hidden_state
 
-        # pass through the explainer
+        # define the mask for the explanation positions
+        e_mask = mask
         if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
             # focus only on the explanation positions of the first concatenated input
             e_mask = mask & (token_type_ids == self.explainer_mask_token_type_id)
-        else:
-            e_mask = mask
+
+        # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
         z, z_dist = self.explainer(gen_h, e_mask) if z is None else z
-        z_mask = (z * e_mask.float()).unsqueeze(-1)
+
+        # add the other tokens to the explanation
+        if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
+            o_mask = mask & (token_type_ids != self.explainer_mask_token_type_id)
+            z = z.masked_fill(o_mask, 1.0)
+
+        # make sure padding positions are not considered explanations
+        z_mask = (z * mask.float()).unsqueeze(-1)
+
         self.ff_z = z
         self.ff_z_dist = z_dist
 
