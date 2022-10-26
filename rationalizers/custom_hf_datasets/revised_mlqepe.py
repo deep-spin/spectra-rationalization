@@ -60,6 +60,7 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
                     "label": datasets.Value("int32"),
                     "batch_id": datasets.Value("int32"),
                     "is_original": datasets.Value("int32"),
+                    "lp": datasets.Value("string"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -108,4 +109,5 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
                 "label": row['gold_label'],
                 "batch_id": row['batch_id'],
                 "is_original": row['is_original'] == 1,
+                "lp": self.config.lp,
             }

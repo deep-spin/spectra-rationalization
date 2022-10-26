@@ -112,6 +112,7 @@ class MLQEPEDataModule(BaseDataModule):
         src_tags = collated_samples["src_tags"]
         mt_tags = collated_samples["mt_tags"]
         src_mt_aligns = collated_samples["src_mt_aligns"]
+        lps = collated_samples["lp"]
 
         # return batch to the data loader
         batch = {
@@ -126,6 +127,7 @@ class MLQEPEDataModule(BaseDataModule):
             "src_tags": src_tags,
             "mt_tags": mt_tags,
             "src_mt_aligns": src_mt_aligns,
+            "lps": lps,
         }
         return batch
 

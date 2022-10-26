@@ -71,7 +71,7 @@ def move_da_to_post_editing_folder(da_dir, wl_dir, lp, split):
     save_data(new_da_file, df['mean'].tolist())
 
 
-def create_dataset(fname):
+def create_dataset(fname, lp):
     """
     Create dataset from QE-PE pairs.
 
@@ -101,6 +101,7 @@ def create_dataset(fname):
 
     df['batch_id'] = df.index.tolist()
     df['da'] = df['da'].apply(float)
+    df['lp'] = [lp] * len(df)
     df['hter'] = df['hter'].apply(float)
     df['src_tags'] = df['src_tags'].apply(convert_ok_bad_tags_to_ints)
     df['mt_tags'] = df['mt_tags'].apply(convert_ok_bad_tags_to_ints)
@@ -154,6 +155,7 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
                     "src_mt_aligns": datasets.Sequence(datasets.Sequence(datasets.Value("int32"))),
                     "da": datasets.Value("float"),
                     "hter": datasets.Value("float"),
+                    "lp": datasets.Value("string"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -189,9 +191,9 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
             for da_dir, wl_dir, split in zip(da_dirs, wl_dirs, splits):
                 move_da_to_post_editing_folder(da_dir, wl_dir, lp, split)
             filepaths = {
-                "train": create_dataset(os.path.join(wl_dirs[0], f'{lp}-train/train')),
-                "dev": create_dataset(os.path.join(wl_dirs[1], f'{lp}-dev/dev')),
-                "test": create_dataset(os.path.join(wl_dirs[2], f'{lp}-test20/test20')),
+                "train": create_dataset(os.path.join(wl_dirs[0], f'{lp}-train/train'), lp),
+                "dev": create_dataset(os.path.join(wl_dirs[1], f'{lp}-dev/dev'), lp),
+                "test": create_dataset(os.path.join(wl_dirs[2], f'{lp}-test20/test20'), lp),
             }
 
         return [
@@ -227,4 +229,5 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
                 "src_mt_aligns": src_mt_aligns,
                 "da": row['da'],
                 "hter": row['hter'],
+                "lp": row['lp'] if 'lp' in df.columns else self.config.lp,
             }

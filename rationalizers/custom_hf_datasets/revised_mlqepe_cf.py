@@ -36,6 +36,7 @@ class CountefactualRevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
                     "label": datasets.Value("int32"),
                     "batch_id": datasets.Value("int32"),
                     "is_original": datasets.Value("int32"),
+                    "lp": datasets.Value("string"),
                     "cf_src": datasets.Value("string"),
                     "cf_mt": datasets.Value("string"),
                     "cf_da": datasets.Value("float"),
@@ -100,4 +101,5 @@ class CountefactualRevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
                 "cf_label": g['gold_label'].iloc[1],
                 "cf_batch_id": g['batch_id'].iloc[1],
                 "cf_is_original": g['is_original'].iloc[1] == 1,
+                "lp": self.config.lp,
             }
