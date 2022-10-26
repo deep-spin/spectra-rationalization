@@ -69,6 +69,13 @@ class BaseEditor(TransformerBaseRationalizer):
         self.cf_explainer_mask_token_type_id = h_params.get("cf_explainer_mask_token_type_id", None)
         self.cf_classify_edits = h_params.get("cf_classify_edits", False)
 
+        # define sentinel range
+        # self.sentinel_a, self.sentinel_b = len(self.tokenizer) - 100, len(self.tokenizer) - 1
+        if 'mt5' in self.cf_gen_arch:
+            self.sentinel_a, self.sentinel_b = 250000, 250099
+        else:
+            self.sentinel_a, self.sentinel_b = 32000, 32099
+
         # counterfactual generator module
         if 't5' in self.cf_gen_arch:
             if 'mice' in self.cf_gen_arch:
@@ -76,7 +83,11 @@ class BaseEditor(TransformerBaseRationalizer):
                 self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained("t5-base", config=t5_config)
                 self.cf_gen_hf.load_state_dict(load_torch_object(self.cf_gen_arch), strict=False)
             else:
-                self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
+                if 'mt5' in self.cf_gen_arch:
+                    from transformers import MT5ForConditionalGeneration
+                    self.cf_gen_hf = MT5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
+                else:
+                    self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
             self.cf_gen_emb_layer = self.cf_gen_hf.shared
         elif 'roberta' in self.cf_gen_arch:
             self.cf_gen_hf = RobertaForMaskedLM.from_pretrained(self.cf_gen_arch)
@@ -160,8 +171,14 @@ class BaseEditor(TransformerBaseRationalizer):
         if self.cf_classify_edits and not self.training:
             with torch.no_grad():
                 x_edit = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-                x_edit = fix_t5_generated_inputs(x_edit, pad_id=self.pad_token_id)
-                x_edit, _ = merge_inputs_for_t5(x_enc, x_edit, z_enc, pad_id=self.pad_token_id, eos_id=self.eos_token_id)
+                x_edit = fix_t5_generated_inputs(
+                    x_edit, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
+                x_edit, _ = merge_inputs_for_t5(
+                    x_enc, x_edit, z_enc,
+                    pad_id=self.pad_token_id, eos_id=self.eos_token_id,
+                    idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
                 x_edit = x_edit[:, 2:]  # remove the prepend label
                 mask_edit = x_edit != self.tokenizer.pad_token_id
                 token_type_ids_edit = 1 - torch.cumprod(x_edit != self.eos_token_id, dim=-1)
@@ -188,14 +205,22 @@ class BaseEditor(TransformerBaseRationalizer):
             # fix inputs for t5
             # replace chunked masked positions by a single sentinel token
             if 'ct5' in self.cf_gen_arch:
-                x_enc, _, z_enc, mask_enc = make_input_for_ct5(x, e, z_pos, mask, pad_id=self.pad_token_id)
+                x_enc, _, z_enc, mask_enc = make_input_for_ct5(
+                    x, e, z_pos, mask, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
             else:
-                x_enc, _, z_enc, mask_enc = make_input_for_t5(x, e, z_pos, mask, pad_id=self.pad_token_id)
+                x_enc, _, z_enc, mask_enc = make_input_for_t5(
+                    x, e, z_pos, mask, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
             # do the same to get decoder inputs with [1 - z] masks
             if 'ct5' in self.cf_gen_arch:
-                x_dec, _, z_dec, mask_dec = make_input_for_ct5(x, e, z_comp, mask, pad_id=self.pad_token_id)
+                x_dec, _, z_dec, mask_dec = make_input_for_ct5(
+                    x, e, z_comp, mask, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
             else:
-                x_dec, _, z_dec, mask_dec = make_input_for_t5(x, e, z_comp, mask, pad_id=self.pad_token_id)
+                x_dec, _, z_dec, mask_dec = make_input_for_t5(
+                    x, e, z_comp, mask, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
         else:
             # fix inputs for bert
             mask_ids = torch.ones_like(x) * self.mask_token_id
@@ -215,7 +240,8 @@ class BaseEditor(TransformerBaseRationalizer):
         if 't5' in self.cf_gen_arch:
             if self.stage == 'test':
                 # set ids that should not be generated
-                bad_tokens_ids = get_t5_sentinel_ids(idx_a=32000, idx_b=32099) + [self.eos_token_id]
+                # bad_tokens_ids = get_t5_sentinel_ids(idx_a=self.self.sentinel_a, idx_b=self.self.sentinel_b)
+                # bad_tokens_ids += [self.eos_token_id]
                 # sample autoregressively
                 gen_out = self.cf_gen_hf.generate(
                     input_ids=x_enc,
@@ -261,7 +287,8 @@ class BaseEditor(TransformerBaseRationalizer):
                 x_tilde = gen_out.sequences[:, 1:]
             else:
                 # set ids that should not be generated
-                bad_tokens_ids = get_t5_sentinel_ids(idx_a=32000, idx_b=32099) + [self.eos_token_id]
+                # bad_tokens_ids = get_t5_sentinel_ids(idx_a=self.self.sentinel_a, idx_b=self.self.sentinel_b)
+                # bad_tokens_ids += [self.eos_token_id]
                 # shift token ids one to the right -> <s>, x0, x1 ...
                 x_dec_shifted = shift_tokens_right(
                     x_dec, self.pad_token_id, self.cf_gen_hf.config.decoder_start_token_id
@@ -393,7 +420,9 @@ class BaseEditor(TransformerBaseRationalizer):
         x_tilde = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
 
         # fix repeated inputs for t5 (up to repetitions of size 3 -> k=2)
-        x_tilde = fix_t5_generated_inputs(x_tilde, pad_id=self.pad_token_id)
+        x_tilde = fix_t5_generated_inputs(
+            x_tilde, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+        )
 
         # get edits
         if 't5' not in self.cf_gen_arch:
@@ -401,7 +430,9 @@ class BaseEditor(TransformerBaseRationalizer):
             gen_ids = z_tilde * x_tilde + (1 - z_tilde) * input_ids
         else:
             gen_ids, z_tilde = merge_inputs_for_t5(
-                x_enc, x_tilde, z_enc, pad_id=self.pad_token_id, eos_id=self.eos_token_id
+                x_enc, x_tilde, z_enc,
+                pad_id=self.pad_token_id, eos_id=self.eos_token_id,
+                idx_a=self.sentinel_a, idx_b=self.sentinel_b
             )
         edit_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
         edit_lengths = (gen_ids != self.pad_token_id).long().sum(-1).tolist()
