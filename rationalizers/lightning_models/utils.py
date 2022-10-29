@@ -479,3 +479,32 @@ def sample_from_logits(logits, top_k=0, top_p=1.0, min_tokens_to_keep=1, num_sam
     sample = torch.multinomial(filtered_probas, num_samples=num_samples)
     sample = sample.view(logits.shape[0], logits.shape[1], num_samples)
     return sample
+
+
+def get_contrast_label(y: torch.Tensor, num_classes: int, task_name: str = "binary_classification"):
+    """
+    Get the contrast label for a given label y.
+
+    :param y: label, tensor of shape [B]
+    :param num_classes: number of classes
+    :param task_name: task name
+    :return:
+        contrast_label: tensor of shape [B]
+    """
+    if task_name == "binary_classification" or task_name == "qe":
+        contrast_label = 1 - y
+    elif task_name == "nli":
+        contrast_label = torch.randint(0, num_classes, y.shape).to(y.device)
+        # entailment becomes contradiction
+        contrast_label[y == 0] = 2
+        # contradiction becomes entailment
+        contrast_label[y == 2] = 0
+        # for neutral we sample a new contrast label
+        contrast_label[y == 1] = torch.where(
+            torch.eq(contrast_label[y == 1], y[y == 1]),
+            (contrast_label[y == 1] + 1) % num_classes,
+            contrast_label[y == 1]
+        )
+    else:
+        raise NotImplementedError
+    return contrast_label
