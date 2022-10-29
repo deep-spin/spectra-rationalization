@@ -50,10 +50,7 @@ if __name__ == "__main__":
         ckpt_path = None
         if tmp_args.ckpt is not None:
             ckpt_path = tmp_args.ckpt
-        elif (
-            "ckpt" in yaml_config_dict["predict"].keys()
-            and yaml_config_dict["predict"]["ckpt"] is not None
-        ):
+        elif "ckpt" in yaml_config_dict["predict"].keys() and yaml_config_dict["predict"]["ckpt"] is not None:
             ckpt_path = yaml_config_dict["predict"]["ckpt"]
         else:
             ckpt_path = find_last_checkpoint_version(

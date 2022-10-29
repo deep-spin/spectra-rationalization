@@ -53,25 +53,10 @@ def run(args):
 
     # set the model to eval mode
     model.log_rationales_in_wandb = False
-    model = model.eval()
+    model.eval()
 
     # test
     shell_logger.info("Testing...")
-    hf_datasets.logging.disable_progress_bar()
+    dm.is_original = dict_args.get("is_original", None)
     trainer = Trainer.from_argparse_args(args)
-
-    if not hasattr(model, 'has_countertfactual_flow') or model.has_countertfactual_flow is False:
-        # perform test separately in case the model does not have a counterfactual flow
-        shell_logger.info("Testing on factuals...")
-        dm.is_original = True
-        trainer.test(model, datamodule=dm, verbose=True)
-
-        shell_logger.info("Testing on counterfactuals...")
-        dm.is_original = False
-        trainer.test(model, datamodule=dm, verbose=True)
-
-    else:
-        # perform test on both factuals and counterfactuals
-        shell_logger.info("Testing on all samples...")
-        dm.is_original = None
-        trainer.test(model, datamodule=dm, verbose=True)
+    trainer.test(model, datamodule=dm, verbose=True)
