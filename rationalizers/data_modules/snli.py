@@ -170,7 +170,7 @@ class SNLIDataModule(BaseDataModule):
                             torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
                 else:
                     example["input_ids"] = self.tokenizer.encode(
-                        example["premise"].strip() + ' ' + constants.SEP + ' ' + example["hypothesis"].strip()
+                        example["premise"].strip() + ' ' + self.sep_token + ' ' + example["hypothesis"].strip()
                     )
                     example["token_type_ids"] = 1 - torch.cumprod(
                         torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)

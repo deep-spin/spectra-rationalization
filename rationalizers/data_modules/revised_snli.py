@@ -31,6 +31,7 @@ class RevisedSNLIDataModule(BaseDataModule):
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
+        self.max_dataset_size = d_params.get("max_dataset_size", None)
         self.is_original = d_params.get("is_original", None)
         self.concat_inputs = d_params.get("concat_inputs", True)
 
@@ -94,7 +95,7 @@ class RevisedSNLIDataModule(BaseDataModule):
             # keep tokens in raw format
             prem_tokens = collated_samples["prem"]
             hyp_tokens = collated_samples["hyp"]
-            tokens = [p + ' ' + constants.SEP + ' ' + h for p, h in zip(prem_tokens, hyp_tokens)]
+            tokens = [p.strip() + ' ' + self.sep_token + ' ' + h.strip() for p, h in zip(prem_tokens, hyp_tokens)]
 
             # metadata
             batch_id = collated_samples["batch_id"]
@@ -151,6 +152,12 @@ class RevisedSNLIDataModule(BaseDataModule):
             side=self.side,
         )
 
+        # cap dataset size - useful for quick testing
+        if self.max_dataset_size is not None:
+            self.dataset["train"] = self.dataset["train"].select(range(self.max_dataset_size))
+            self.dataset["validation"] = self.dataset["validation"].select(range(self.max_dataset_size))
+            self.dataset["test"] = self.dataset["test"].select(range(self.max_dataset_size))
+
         # build tokenize rand label encoder
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
@@ -180,7 +187,7 @@ class RevisedSNLIDataModule(BaseDataModule):
                             torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
                 else:
                     example["input_ids"] = self.tokenizer.encode(
-                        example["prem"].strip() + ' ' + constants.SEP + ' ' + example["hyp"].strip()
+                        example["prem"].strip() + ' ' + self.sep_token + ' ' + example["hyp"].strip()
                     )
                     example["token_type_ids"] = 1 - torch.cumprod(
                         torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
