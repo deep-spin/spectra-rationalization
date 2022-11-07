@@ -10,8 +10,8 @@ train:
     wandb_entity: 'mtreviso'
 
     # io
-    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
-    save_counterfactuals: True  # will be saved in a .txt in the default_root_dir as `{test|val}_counterfactuals.txt`
+    save_rationales: False      # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_edits: False           # will be saved in a .txt in the default_root_dir as `{test|val}_edits.txt`
     save_tokenizer: False       # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
     save_label_encoder: False   # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
@@ -40,9 +40,9 @@ train:
     # ckpt: null
 
     # 20%
-    # factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version27vf0lne/checkpoints/epoch=7.ckpt
+    factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version27vf0lne/checkpoints/epoch=7.ckpt
     # 30%
-    factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version25ars3wn/checkpoints/epoch=7.ckpt
+    #factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version25ars3wn/checkpoints/epoch=7.ckpt
     # 40%
     #factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version2r1fi64q/checkpoints/epoch=6.ckpt
 
@@ -63,7 +63,7 @@ train:
     explainer_pre_mlp: True
     explainer_requires_grad: False
     explainer_mask_token_type_id: 0
-    sparsemap_budget: 30
+    sparsemap_budget: 20
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
     dropout: 0.1
@@ -95,10 +95,6 @@ train:
         num_return_sequences: 1     # sample N sequences
         min_length: null            # minimum length of the generated sequence
         max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)
-    penalty_seq2seq: 1.0
-    penalty_similarity: 1.0
-    penalty_diversity: 1.0
-    penalty_fluency: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
@@ -139,3 +135,6 @@ predict:
     devices: 1
     load_tokenizer: False       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
     load_label_encoder: False   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_edits: True            # will be saved in a .txt in the default_root_dir as `{test|val}_edits.txt`
+    cf_classify_edits: True

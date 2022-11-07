@@ -1,0 +1,38 @@
+# general args
+seed: 0    # for reproducibility
+default_root_dir: 'experiments/cfrat-editor-t5/'  # path to save logs and models
+
+# the options defined here will overwrite the ones defined in the checkpoint
+predict:
+    # ckpt: null               # will be defined via cli --ckpt or will get last checkpoint version if it exists
+    accelerator: gpu
+    devices: 1
+    load_tokenizer: False       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
+    load_label_encoder: False   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+
+    # overwrite config saved in the ckpt
+    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_edits: True            # will be saved in a .txt in the default_root_dir as `{test|val}_edits.txt`
+    cf_classify_edits: True
+
+    # data
+    dm: 'revised_imdb'              # data module name (see docs for more options)
+    batch_size: 4                   # minibatch size
+    num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
+    vocab_min_occurrences: 1       # frequency for a token to be added to the vocabulary
+    max_seq_len: 512                # pretrained transformer limitation
+    is_original: True               # filter out samples by originality: True, False, or None (no filter, default)
+
+    cf_generate_kwargs:
+        do_sample: True            # deterministic or stochastic generation
+        num_beams: 5               # mice: 15
+        num_beam_groups: 1          # to promote diversity in beam groups
+        early_stopping: True        # stop search when >= num_beams sentences are done (default: False | mice: True)
+        length_penalty: 1.0         # (<1) means shorter sequences, (>1) longer sequences
+        top_k: 30                   # default: 50  | mice: 30
+        top_p: 0.95                 # default: 1.0 | mice: 0.95
+        typical_p: null             # default: 1.0
+        no_repeat_ngram_size: 2     # no bigrams repetitions are allowed (default: 0 | mice: 2)
+        num_return_sequences: 1     # sample N sequences
+        min_length: null            # minimum length of the generated sequence
+        max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)

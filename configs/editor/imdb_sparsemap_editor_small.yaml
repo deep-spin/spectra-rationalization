@@ -10,8 +10,8 @@ train:
     wandb_entity: 'mtreviso'
 
     # io
-    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
-    save_counterfactuals: True  # will be saved in a .txt in the default_root_dir as `{test|val}_counterfactuals.txt`
+    save_rationales: False      # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_edits: False           # will be saved in a .txt in the default_root_dir as `{test|val}_edits.txt`
     save_tokenizer: False       # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
     save_label_encoder: False   # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
@@ -37,11 +37,17 @@ train:
     # ckpt: null
 
     # 10% (remember to change sparsemap_budget below)
-    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
+    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
     # 15%
     #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version3o2koucn/checkpoints/epoch=6.ckpt
     # 20%
     #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version23c7nfo1/checkpoints/epoch=8.ckpt
+    # 30%
+    # factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version174wy4rb/checkpoints/epoch=8.ckpt
+    # 40%
+    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/versionhhnlzz6z/checkpoints/epoch=4.ckpt
+    # 50%
+    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1jm2vddx/checkpoints/epoch=6.ckpt
 
     load_tokenizer: False
     load_label_encoder: False
@@ -58,8 +64,7 @@ train:
     explainer: 'sparsemap'
     explainer_pre_mlp: True
     explainer_requires_grad: False
-    explainer_mask_token_type_id: 0
-    sparsemap_budget: 10
+    sparsemap_budget: 40
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
     dropout: 0.1
@@ -74,6 +79,7 @@ train:
     cf_prepend_label_type: "gold"
     cf_z_type: "pred"
     cf_task_name: "binary_classification"
+    cf_classify_edits: True
 
     # https://huggingface.co/docs/transformers/v4.23.1/en/main_classes/text_generation#transformers.generation_utils.GenerationMixin.generate
     cf_generate_kwargs:
@@ -89,14 +95,10 @@ train:
         num_return_sequences: 1     # sample N sequences
         min_length: null            # minimum length of the generated sequence
         max_length: 512             # maximum length of the generated sequence (default: 512 | mice: 512)
-    penalty_seq2seq: 1.0
-    penalty_similarity: 1.0
-    penalty_diversity: 1.0
-    penalty_fluency: 1.0
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
+    lr: 0.0001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False
@@ -133,3 +135,6 @@ predict:
     devices: 1
     load_tokenizer: False       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
     load_label_encoder: False   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
+    save_rationales: True       # will be saved in a .txt in the default_root_dir as `{test|val}_rationales.txt`
+    save_edits: True            # will be saved in a .txt in the default_root_dir as `{test|val}_edits.txt`
+    cf_classify_edits: True
