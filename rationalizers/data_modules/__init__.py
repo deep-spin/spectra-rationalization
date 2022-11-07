@@ -6,6 +6,7 @@ from rationalizers.data_modules.contrast_imdb_cf import CounterfactualContrastIM
 from rationalizers.data_modules.hans import HANSDataModule
 from rationalizers.data_modules.hotel_location import HotelLocationDataModule
 from rationalizers.data_modules.imdb import ImdbDataModule
+from rationalizers.data_modules.imdb_augmented import AugmentedImdbDataModule
 from rationalizers.data_modules.mlqepe import MLQEPEDataModule
 from rationalizers.data_modules.multinli import MultiNLIDataModule
 from rationalizers.data_modules.revised_imdb import RevisedIMDBDataModule
@@ -32,6 +33,7 @@ available_data_modules = {
     "snli": SNLIDataModule,
     "ag_news": AgNewsDataModule,
     "imdb": ImdbDataModule,
+    "imdb_augmented": AugmentedImdbDataModule,
     "multi_nli": MultiNLIDataModule,
     "hotel_location": HotelLocationDataModule,
     "hans": HANSDataModule,
