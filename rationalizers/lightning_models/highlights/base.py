@@ -124,11 +124,18 @@ class BaseRationalizer(pl.LightningModule):
         # return the loss tensor to PTL
         return {"loss": loss, "ps": loss_stats[prefix + "_ps"]}
 
+    def predict_step(self, batch: dict, batch_idx: int, dataloader_idx: int = None):
+        self.stage = "predict"
+        output = self._shared_eval_step(batch, batch_idx, prefix="test")
+        return output
+
     def validation_step(self, batch: dict, batch_idx: int):
+        self.stage = "val"
         output = self._shared_eval_step(batch, batch_idx, prefix="val")
         return output
 
     def test_step(self, batch: dict, batch_idx: int):
+        self.stage = "test"
         output = self._shared_eval_step(batch, batch_idx, prefix="test")
         return output
 

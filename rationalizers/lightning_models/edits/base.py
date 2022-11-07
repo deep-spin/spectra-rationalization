@@ -68,6 +68,7 @@ class BaseEditor(TransformerBaseRationalizer):
         self.cf_task_name = h_params.get("cf_task_name", "binary_classification")
         self.cf_explainer_mask_token_type_id = h_params.get("cf_explainer_mask_token_type_id", None)
         self.cf_classify_edits = h_params.get("cf_classify_edits", False)
+        self.generation_mode = False
 
         # define sentinel range
         # self.sentinel_a, self.sentinel_b = len(self.tokenizer) - 100, len(self.tokenizer) - 1
@@ -249,52 +250,35 @@ class BaseEditor(TransformerBaseRationalizer):
 
     def _sample_from_lm(self, x_enc, x_dec, mask=None, mask_dec=None):  # noqa
         if 't5' in self.cf_gen_arch:
-            if self.stage == 'test':
+            if self.generation_mode:
                 # set ids that should not be generated
                 # bad_tokens_ids = get_t5_sentinel_ids(idx_a=self.self.sentinel_a, idx_b=self.self.sentinel_b)
                 # bad_tokens_ids += [self.eos_token_id]
+                do_output_logits = False
+                logits = None
+
                 # sample autoregressively
                 gen_out = self.cf_gen_hf.generate(
                     input_ids=x_enc,
                     attention_mask=mask.long(),
                     return_dict_in_generate=True,
-                    output_scores=True,
+                    output_scores=do_output_logits,
                     # bad_tokens_ids=bad_tokens_ids,
                     **self.cf_generate_kwargs
                 )
                 # clear memory because generation is done
                 torch.cuda.empty_cache()
-                # stack outputs and cut out start token if necessary
-                logits = torch.stack(gen_out.scores).transpose(0, 1)
-                if gen_out.sequences.shape[1] > logits.shape[1]:
-                    x_tilde = gen_out.sequences[:, 1:]
-                else:
-                    x_tilde = gen_out.sequences
 
-            elif self.stage == 'val':
-                # get logits with greedy decoding
-                x_dec_shifted = shift_tokens_right(
-                    x_dec, self.pad_token_id, self.cf_gen_hf.config.decoder_start_token_id
-                )
-                mask_dec_shifted = ~torch.eq(x_dec_shifted, self.pad_token_id)
-                # pass through the model
-                outputs = self.cf_gen_hf(
-                    input_ids=x_enc,
-                    attention_mask=mask.long(),
-                    decoder_input_ids=x_dec_shifted,
-                    decoder_attention_mask=mask_dec_shifted.long()
-                )
-                logits = outputs.logits
+                # stack outputs and
+                if do_output_logits:
+                    logits = torch.stack(gen_out.scores).transpose(0, 1)
+                    # reshape
+                    bs = x_enc.shape[0]
+                    nb = self.cf_generate_kwargs.get('num_beams', 1)
+                    ts = logits.shape[1]
+                    logits = logits.reshape(bs, nb, ts, -1)
 
-                # generate with beam search
-                gen_out = self.cf_gen_hf.generate(
-                    input_ids=x_enc,
-                    attention_mask=mask.long(),
-                    return_dict_in_generate=True,
-                    output_scores=True,
-                    **self.cf_generate_kwargs
-                )
-                torch.cuda.empty_cache()
+                # cut out start token
                 x_tilde = gen_out.sequences[:, 1:]
             else:
                 # set ids that should not be generated
@@ -326,9 +310,6 @@ class BaseEditor(TransformerBaseRationalizer):
             x_tilde = logits.argmax(dim=-1)
             x_tilde = x_tilde.masked_fill(~mask_dec, self.pad_token_id)
 
-        # save variables for computing penalties later
-        self.cf_x_tilde = x_tilde.clone()
-        self.cf_log_prob_x_tilde = torch.log_softmax(logits, dim=-1)
         return x_tilde, logits
 
     def get_counterfactual_loss(self, y_hat, y, z, mask, prefix):
