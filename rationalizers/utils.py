@@ -332,7 +332,8 @@ def save_rationales(filename, all_scores, all_lengths):
 def save_counterfactuals(filename, all_pieces, all_lengths):
     f = open(filename, 'w', encoding='utf8')
     for pieces, leng in zip(all_pieces, all_lengths):
-        text = ' '.join(pieces[:leng])
+        pieces_no_none = ['None' if p is None else p for p in pieces]
+        text = ' '.join(pieces_no_none[:leng])
         f.write(text + '\n')
     f.close()
 
