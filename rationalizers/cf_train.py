@@ -133,6 +133,9 @@ def run(args):
         save_label_encoder=args.save_label_encoder
     )
 
+    # log the best model path
+    logger.log_hyperparams({'best_model_path': checkpoint_callback.best_model_path})
+
     # perform test
     shell_logger.info("Starting test...")
     hf_datasets.logging.disable_progress_bar()
@@ -153,9 +156,6 @@ def run(args):
     dm.is_original = None
     outputs = trainer.test(datamodule=dm, verbose=True)
     log_final_outputs(outputs, flow_name=None, prefix_name=None)
-
-    # log the best model path
-    logger.log_hyperparams({'best_model_path': checkpoint_callback.best_model_path})
 
     # bye bye
     shell_logger.info("Bye bye!")

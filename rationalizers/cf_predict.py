@@ -53,6 +53,7 @@ def run(args):
 
     # set the model to eval mode
     model.log_rationales_in_wandb = False
+    model.generation_mode = True
     model.eval()
 
     # test
