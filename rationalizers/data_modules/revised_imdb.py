@@ -31,6 +31,7 @@ class RevisedIMDBDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
+        self.max_dataset_size = d_params.get("max_dataset_size", None)
 
         # objects
         self.dataset = None
@@ -104,6 +105,12 @@ class RevisedIMDBDataModule(BaseDataModule):
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
+
+        # cap dataset size - useful for quick testing
+        if self.max_dataset_size is not None:
+            self.dataset["train"] = self.dataset["train"].select(range(self.max_dataset_size))
+            self.dataset["validation"] = self.dataset["validation"].select(range(self.max_dataset_size))
+            self.dataset["test"] = self.dataset["test"].select(range(self.max_dataset_size))
 
         # build tokenizer
         if self.tokenizer is None:
