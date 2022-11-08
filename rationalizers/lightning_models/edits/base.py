@@ -132,6 +132,7 @@ class BaseEditor(TransformerBaseRationalizer):
         :param token_type_ids: mask tensor for explanation positions. torch.LongTensor of shape [B, T]
         :param y: labels tensor. torch.LongTensor of shape [B]
         :param z: rationales tensor. torch.LongTensor of shape [B, T]
+        :param contrast_label: whether to prepend a contrastive label or not
         :param current_epoch: int represents the current epoch.
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
@@ -142,8 +143,8 @@ class BaseEditor(TransformerBaseRationalizer):
                 z_hat, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
 
         # select which y and z to use
-        y_prepend = y.clone() if self.cf_prepend_label_type == "gold" else y_hat.argmax(-1)
-        z_prepend = z.clone() if self.cf_z_type == "gold" else z_hat
+        y_prepend = y.clone() if y is not None and self.cf_prepend_label_type == "gold" else y_hat.argmax(-1)
+        z_prepend = z.clone() if z is not None and self.cf_z_type == "gold" else z_hat
 
         # get a contrast label
         if contrast_label:
@@ -316,7 +317,7 @@ class BaseEditor(TransformerBaseRationalizer):
         """
         Compute loss for the counterfactual flow.
         """
-        if self.stage == 'test':
+        if self.stage in ['test', 'predict']:
             main_loss = torch.zeros(1, device=self.device)
         else:
             # lm_logits = y_hat.log_softmax(dim=-1).view(-1, y_hat.size(-1))
@@ -630,3 +631,55 @@ class BaseEditor(TransformerBaseRationalizer):
         self.logger.agg_and_log_metrics(dict_metrics, self.current_epoch)
 
         return dict_metrics
+
+    def predict_step(self, batch: dict, batch_idx: int, dataloader_idx: int = None):
+        input_ids = batch["input_ids"]
+        token_type_ids = batch.get("token_type_ids", None)
+        labels = batch.get("labels", None)
+        z_gold = batch.get("z", None)
+        mask = input_ids != constants.PAD_ID
+
+        # forward-pass
+        (z, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec) = self(
+            x=input_ids,
+            mask=mask,
+            token_type_ids=token_type_ids,
+            y=labels,
+            z=z_gold,
+            contrast_label=True,
+            current_epoch=self.current_epoch
+        )
+
+        # recover tokens from ids
+        def get_edit_tokens(x_tilde_, x_enc_, z_enc_):
+            # merge rationales
+            gen_ids = x_tilde_.clone() if x_tilde_.dim() == 2 else x_tilde_.argmax(dim=-1)
+            # fix repeated inputs for t5 (up to repetitions of size 3 -> k=2)
+            gen_ids = fix_t5_generated_inputs(
+                gen_ids, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+            )
+            # get edits
+            if 't5' not in self.cf_gen_arch:
+                z_tilde = (z_enc_ > 0).long()
+                gen_ids = z_tilde * gen_ids + (1 - z_tilde) * input_ids
+            else:
+                gen_ids, z_tilde = merge_inputs_for_t5(
+                    x_enc_, gen_ids, z_enc_,
+                    pad_id=self.pad_token_id, eos_id=self.eos_token_id,
+                    idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
+            tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
+            lengths = (gen_ids != self.pad_token_id).long().sum(-1).tolist()
+            return tokens, z_tilde, lengths
+
+        edit_tokens, edit_z_tilde, edit_lengths = get_edit_tokens(x_tilde, x_enc, z_enc)
+        edit_tokens = [e[:l] for e, l in zip(edit_tokens, edit_lengths)]
+        edit_z_tilde = [z[:l] for z, l in zip(edit_z_tilde, edit_lengths)]
+
+        output = {
+            "predictions": y_hat,
+            "z": z,
+            "edits": edit_tokens,
+            "edits_z": edit_z_tilde,
+        }
+        return output
