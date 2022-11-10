@@ -39,9 +39,13 @@ class BaseDataModule(pl.LightningDataModule):
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         raise NotImplementedError
 
-    def train_dataloader(self):
-        # use a standard random sampler:
-        sampler = RandomSampler(self.dataset["train"])
+    def train_dataloader(self, shuffle: bool = True):
+        if shuffle:
+            # use a standard random sampler:
+            sampler = RandomSampler(self.dataset["train"])
+        else:
+            # or use a sequential sampler:
+            sampler = SequentialSampler(self.dataset["train"])
         return DataLoader(
             self.dataset["train"],
             sampler=sampler,
