@@ -1,6 +1,6 @@
 # general args
 seed: 1    # for reproducibility
-default_root_dir: 'experiments/cfrat-revised-imdb-oversampled-sparsemap-orig-transformer/'  # path to save logs and models
+default_root_dir: 'experiments/cfrat-revised-imdb-synthetic-sparsemap-orig-transformer/'  # path to save logs and models
 
 
 # training args
@@ -17,16 +17,17 @@ train:
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'revised_imdb_oversampled'  # data module name (see docs for more options)
+    dm: 'revised_imdb_synthetic'  # data module name (see docs for more options)
     batch_size: 8                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     max_seq_len: 512                # pretrained transformer limitation
     # max_dataset_size: 64          # for quick testing
-    is_original: True               # filter out samples by originality: True, False, or None (no filter, default)
+    is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
+    synthetic_edits_path: 'data/revised_imdb_beam_15_t5_small_50p.tsv'
 
     # early stopping
-    monitor: 'val_ff_accuracy'     # quantity to be monitored
+    monitor: 'val_cf_accuracy'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
     monitor_patience: 5         # number of epochs to wait for early stopping
 
