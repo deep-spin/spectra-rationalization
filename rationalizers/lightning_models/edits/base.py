@@ -89,13 +89,10 @@ class BaseEditor(TransformerBaseRationalizer):
                     self.cf_gen_hf = MT5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
                 else:
                     self.cf_gen_hf = T5ForConditionalGeneration.from_pretrained(self.cf_gen_arch)
-            self.cf_gen_emb_layer = self.cf_gen_hf.shared
         elif 'roberta' in self.cf_gen_arch:
             self.cf_gen_hf = RobertaForMaskedLM.from_pretrained(self.cf_gen_arch)
-            self.cf_gen_emb_layer = self.cf_gen_hf.bert.embeddings.word_embeddings
         elif 'bert' in self.cf_gen_arch:
             self.cf_gen_hf = BertForMaskedLM.from_pretrained(self.cf_gen_arch)
-            self.cf_gen_emb_layer = self.cf_gen_hf.bert.embeddings.word_embeddings
         else:
             raise NotImplementedError
 
