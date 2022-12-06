@@ -238,8 +238,14 @@ class TransformerBaseRationalizer(BaseRationalizer):
         :param z: precomputed latent vector. torch.FloatTensor of shape [B, T] (default None)
         :return: z, y_hat
         """
-        # receive input ids
-        gen_e = self.ff_gen_emb_layer(x)
+        # get the embeddings of the generator
+        if x.dim() == 2:
+            # receive input ids
+            gen_e = self.ff_gen_emb_layer(x)
+        else:
+            # receive one-hot vectors
+            inputs_embeds = x @ self.ff_gen_emb_layer.word_embeddings.weight
+            gen_e = self.ff_gen_emb_layer(inputs_embeds=inputs_embeds)
 
         # pass though the generator encoder
         if 't5' in self.ff_gen_arch:
@@ -282,16 +288,22 @@ class TransformerBaseRationalizer(BaseRationalizer):
             o_mask = mask & (token_type_ids != self.explainer_mask_token_type_id)
             z = z.masked_fill(o_mask, 1.0)
 
-        # make sure padding positions are not considered explanations
-        z_mask = (z * mask.float()).unsqueeze(-1)
-
+        # save vars (useful for some methods, e.g., hardkuma and info bottleneck)
         self.ff_z = z
         self.ff_z_dist = z_dist
 
+        # make sure padding positions are not considered explanations
+        z_mask = (z * mask.float()).unsqueeze(-1)
+
         # decide if we pass embeddings or hidden states to the predictor
         if self.ff_selection_faithfulness is True:
-            # receive input ids
-            pred_e = self.ff_pred_emb_layer(x)
+            if x.dim() == 2:
+                # receive input ids
+                pred_e = self.ff_pred_emb_layer(x)
+            else:
+                # receive one-hot vectors
+                inputs_embeds = x @ self.ff_pred_emb_layer.word_embeddings.weight
+                pred_e = self.ff_pred_emb_layer(inputs_embeds=inputs_embeds)
         else:
             pred_e = gen_h
 
@@ -416,27 +428,21 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # logger=False because they are going to be logged via loss_stats
         self.log("train_ff_ps", loss_stats["train_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
+        self.log("train_ff_p1", loss_stats["train_p1"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
         self.log("train_sum_loss", loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
 
-        if self.is_multilabel:
-            metrics_to_wandb = {
-                "train_ff_p1": loss_stats["train_p1"],
-                "train_ff_ps": loss_stats["train_ps"],
-                "train_ff_sum_loss": loss_stats["criterion"],
-            }
-        else:
-            metrics_to_wandb = {
-                "train_ff_p1": loss_stats["train_p1"],
-                "train_ff_ps": loss_stats["train_ps"],
-                "train_ff_sum_loss": loss_stats["mse"],
-            }
+        metrics_to_wandb = {
+            "train_ff_p1": loss_stats["train_p1"],
+            "train_ff_ps": loss_stats["train_ps"],
+            "train_ff_sum_loss": loss.item(),
+        }
         if "cost_g" in loss_stats:
             metrics_to_wandb["train_cost_g"] = loss_stats["cost_g"]
 
         self.logger.log_metrics(metrics_to_wandb, self.global_step)
 
         # return the loss tensor to PTL
-        return {"loss": loss, "ps": loss_stats["train_ps"]}
+        return {"loss": loss, "ps": loss_stats["train_ps"], "p1": loss_stats["train_p1"]}
 
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
         input_ids = batch["input_ids"]
@@ -465,6 +471,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         output = {
             f"{prefix}_sum_loss": loss.item(),
             f"{prefix}_ps": ff_loss_stats[prefix + "_ps"],
+            f"{prefix}_p1": ff_loss_stats[prefix + "_p1"],
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
             f"{prefix}_pieces": pieces,
@@ -524,6 +531,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
             # log metrics
             dict_metrics = {
                 f"{prefix}_{flow}_ps": np.mean(stacked_outputs[f"{prefix}_ps"]),
+                f"{prefix}_{flow}_p1": np.mean(stacked_outputs[f"{prefix}_p1"]),
                 f"{prefix}_{flow}_sum_loss": np.mean(stacked_outputs[f"{prefix}_sum_loss"]),
             }
 
