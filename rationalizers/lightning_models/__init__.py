@@ -4,6 +4,8 @@ from rationalizers.lightning_models.highlights.sparsemax import SparsemaxRationa
 from rationalizers.lightning_models.highlights.relaxed_bernoulli import RelaxedBernoulliRationalizer
 from rationalizers.lightning_models.highlights.hardkuma import HardKumaRationalizer
 from rationalizers.lightning_models.highlights.transformers.info_bottleneck import TransformerInfoBottleneckRationalizer
+from rationalizers.lightning_models.highlights.transformers.spectra_cf_expl import ExplSupervisedTransformerSPECTRARationalizer
+from rationalizers.lightning_models.highlights.transformers.spectra_cf_semi import SemiSupervisedCfTransformerSPECTRARationalizer
 from rationalizers.lightning_models.highlights.transformers.spectra_cf_supervised import SupervisedCfTransformerSPECTRARationalizer
 from rationalizers.lightning_models.highlights.vanilla import VanillaClassifier
 from rationalizers.lightning_models.highlights.transformers.spectra import TransformerSPECTRARationalizer
@@ -28,6 +30,8 @@ available_models = {
     "hardkuma": HardKumaRationalizer,
     "transformer_spectra": TransformerSPECTRARationalizer,
     "transformer_spectra_cf": CounterfactualTransformerSPECTRARationalizer,
+    "transformer_spectra_cf_semi_supervised": SemiSupervisedCfTransformerSPECTRARationalizer,
+    "transformer_spectra_cf_expl_supervised": ExplSupervisedTransformerSPECTRARationalizer,
     "transformer_spectra_cf_supervised": SupervisedCfTransformerSPECTRARationalizer,
     "transformer_bernoulli": TransformerBernoulliRationalizer,
     "transformer_hardkuma": TransformerHardKumaRationalizer,
