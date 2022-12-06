@@ -28,6 +28,8 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
 
         # hyperparams
         self.lp = d_params.get("lp", "en-de")
+        self.filter_error_min = d_params.get("filter_error_min", None)
+        self.filter_error_max = d_params.get("filter_error_max", None)
         self.batch_size = d_params.get("batch_size", 32)
         self.num_workers = d_params.get("num_workers", 0)
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
@@ -183,6 +185,16 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
 
         self.dataset = self.dataset.map(_encode)
         self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+        self.dataset = self.dataset.filter(lambda example: len(example["cf_input_ids"]) <= self.max_seq_len)
+
+        # filter by error rate
+        def filter_error_rate(example):
+            error_a = self.filter_error_min if self.filter_error_min is not None else 0.0
+            error_b = self.filter_error_max if self.filter_error_max is not None else 1.0
+            return (error_a <= example['hter'] <= error_b) and (error_a <= example['cf_hter'] <= error_b)
+
+        if self.filter_error_min is not None or self.filter_error_max is not None:
+            self.dataset = self.dataset.filter(filter_error_rate)
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
