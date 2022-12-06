@@ -280,7 +280,16 @@ def is_trainable(module: torch.nn.Module):
 
 
 def masked_average(tensor, mask):
-    """ Performs masked average of a given tensor at time dim. """
+    """
+    Performs masked average of a given tensor at time dim.
+
+    Args:
+        tensor (torch.Tensor): tensor to be averaged of shape [B, T, H]
+        mask (torch.Tensor): mask of shape [B, T]
+
+    Returns:
+        torch.Tensor: averaged tensor of shape [B, H]
+    """
     tensor_sum = (tensor * mask.float().unsqueeze(-1)).sum(1)
     tensor_mean = tensor_sum / mask.sum(-1).float().unsqueeze(-1)
     return tensor_mean
@@ -332,7 +341,7 @@ def save_rationales(filename, all_scores, all_lengths):
 def save_counterfactuals(filename, all_pieces, all_lengths):
     f = open(filename, 'w', encoding='utf8')
     for pieces, leng in zip(all_pieces, all_lengths):
-        pieces_no_none = ['None' if p is None else p for p in pieces]
+        pieces_no_none = ['<unk>' if p is None else p for p in pieces]
         text = ' '.join(pieces_no_none[:leng])
         f.write(text + '\n')
     f.close()
