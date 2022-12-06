@@ -92,6 +92,8 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.penalty_similarity = h_params.get('penalty_similarity', 1.0)
         self.penalty_diversity = h_params.get('penalty_diversity', 1.0)
         self.penalty_fluency = h_params.get('penalty_fluency', 1.0)
+        self.cf_margin = h_params.get('cf_margin', 0.0)
+        self.cf_margin_lbda = h_params.get('cf_margin_lbda', 1.0)
 
         # explainer:
         self.explainer_pre_mlp = h_params.get("explainer_pre_mlp", True)
@@ -961,7 +963,11 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         )
 
         # combine losses
-        loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
+        if self.cf_margin > 0:
+            loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
+            loss += self.cf_margin_lbda * torch.relu(ff_loss - cf_loss + self.cf_margin)
+        else:
+            loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
 
         # logger=False because they are going to be logged via loss_stats
         self.log("train_ff_ps", loss_stats["train_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
@@ -1038,7 +1044,11 @@ class CounterfactualTransformerSPECTRARationalizer(BaseRationalizer):
         self.logger.agg_and_log_metrics(cf_loss_stats, step=None)
 
         # combine losses
-        loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
+        if self.cf_margin > 0:
+            loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
+            loss += self.cf_margin_lbda * torch.relu(ff_loss - cf_loss + self.cf_margin)
+        else:
+            loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss
 
         # log metrics
         self.log(f"{prefix}_ff_sum_loss", ff_loss.item(), prog_bar=True, logger=True, on_step=False, on_epoch=True,)
