@@ -57,6 +57,14 @@ class SST2DataModule(ImdbDataModule):
         self.dataset = self.dataset.map(_encode)
         self.dataset = self.dataset.filter(_filter)
 
+        # fix labels
+        def _fix_label(example: dict):
+            # originally, 0 is positive and 1 is negative
+            # we want 0 to be negative and 1 to be positive
+            example["label"] = 1 - example["label"]
+            return example
+        self.dataset = self.dataset.map(_fix_label)
+
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
