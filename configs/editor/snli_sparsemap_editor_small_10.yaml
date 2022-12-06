@@ -37,15 +37,15 @@ train:
     # ckpt: null
 
     # 10% (remember to change sparsemap_budget below)
-    # factual_ckpt:
+    factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version2h4o1dsh/checkpoints/epoch=7.ckpt
     # 20%
-    # factual_ckpt:
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version3o29qwtb/checkpoints/epoch=7.ckpt
     # 30%
-    # factual_ckpt:
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version2h9ssktj/checkpoints/epoch=7.ckpt
     # 40%
-    # factual_ckpt:
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version1hrkom9i/checkpoints/epoch=6.ckpt
     # 50%
-    # factual_ckpt:
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version1wnds2gl/checkpoints/epoch=9.ckpt
 
     load_tokenizer: False
     load_label_encoder: False

@@ -18,7 +18,7 @@ train:
 
     # data
     dm: 'snli'              # data module name (see docs for more options)
-    batch_size: 32                   # minibatch size
+    batch_size: 128                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     max_seq_len: 512                # pretrained transformer limitation
@@ -53,7 +53,7 @@ train:
     explainer_pre_mlp: True
     explainer_requires_grad: True
     explainer_mask_token_type_id: 0
-    sparsemap_budget: 40
+    sparsemap_budget: 10
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
     dropout: 0.1

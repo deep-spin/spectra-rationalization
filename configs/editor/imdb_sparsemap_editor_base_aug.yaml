@@ -37,11 +37,11 @@ train:
     # ckpt: null
 
     # 10% (remember to change sparsemap_budget below)
-    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
+    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
     # 15%
     #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version3o2koucn/checkpoints/epoch=6.ckpt
     # 20%
-    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version23c7nfo1/checkpoints/epoch=8.ckpt
+    # factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version23c7nfo1/checkpoints/epoch=8.ckpt
     # 30%
     #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version174wy4rb/checkpoints/epoch=8.ckpt
     # 40%
@@ -64,7 +64,7 @@ train:
     explainer: 'sparsemap'
     explainer_pre_mlp: True
     explainer_requires_grad: False
-    sparsemap_budget: 20
+    sparsemap_budget: 10
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
     dropout: 0.1

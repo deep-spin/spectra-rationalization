@@ -17,12 +17,12 @@ train:
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'imdb_augmented'              # data module name (see docs for more options)
-    batch_size: 8                   # minibatch size
+    dm: 'snli'              # data module name (see docs for more options)
+    batch_size: 64                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     max_seq_len: 512                # pretrained transformer limitation
-    # max_dataset_size: 64          # for quick testing
+    # max_dataset_size: 1000          # for quick testing
     # is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
 
     # early stopping
@@ -37,17 +37,15 @@ train:
     # ckpt: null
 
     # 10% (remember to change sparsemap_budget below)
-    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1y1b70qd/checkpoints/epoch=9.ckpt
-    # 15%
-    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version3o2koucn/checkpoints/epoch=6.ckpt
+    factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version2h4o1dsh/checkpoints/epoch=7.ckpt
     # 20%
-    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version23c7nfo1/checkpoints/epoch=8.ckpt
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version3o29qwtb/checkpoints/epoch=7.ckpt
     # 30%
-#    factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version174wy4rb/checkpoints/epoch=8.ckpt
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version2h9ssktj/checkpoints/epoch=7.ckpt
     # 40%
-    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/versionhhnlzz6z/checkpoints/epoch=4.ckpt
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version1hrkom9i/checkpoints/epoch=6.ckpt
     # 50%
-    #factual_ckpt: experiments/cfrat-revised-imdb-sparsemap-full-transformer/version1jm2vddx/checkpoints/epoch=6.ckpt
+    # factual_ckpt: /media/hdd1/mtreviso/experiments/cfrat-revised-snli-sparsemap-full-transformer/version1wnds2gl/checkpoints/epoch=9.ckpt
 
     load_tokenizer: False
     load_label_encoder: False
@@ -64,6 +62,7 @@ train:
     explainer: 'sparsemap'
     explainer_pre_mlp: True
     explainer_requires_grad: False
+    explainer_mask_token_type_id: 0  # edit the premise only
     sparsemap_budget: 10
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
@@ -75,10 +74,11 @@ train:
     temperature: 1.0
 
     # editor
-    cf_gen_arch: "t5-small"
+    cf_gen_arch: "t5-base"
     cf_prepend_label_type: "gold"
     cf_z_type: "pred"
-    cf_task_name: "binary_classification"
+    cf_task_name: "nli"
+    cf_explainer_mask_token_type_id: 0  # edit the premise only
     cf_classify_edits: True
 
     # https://huggingface.co/docs/transformers/v4.23.1/en/main_classes/text_generation#transformers.generation_utils.GenerationMixin.generate
