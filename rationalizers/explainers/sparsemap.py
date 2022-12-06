@@ -32,7 +32,10 @@ class SparseMAPExplainer(BaseExplainer):
 
         for k in range(batch_size):
             scores = h1[k].view(-1)
-            budget = torch.round(self.budget / 100 * lengths[k])
+            if isinstance(self.budget, (int, float)):
+                budget = torch.round(self.budget / 100 * lengths[k])
+            else:
+                budget = torch.round(self.budget[k].item() / 100 * lengths[k])
             length = scores.shape[0]
 
             # Set unary scores for valid positions
