@@ -17,15 +17,12 @@ train:
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'mlqepe'              # data module name (see docs for more options)
-    batch_size: 4                   # minibatch size
+    dm: 'snli'              # data module name (see docs for more options)
+    batch_size: 128                   # minibatch size
     num_workers: 1                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     max_seq_len: 512                # pretrained transformer limitation
-    lp: "all-all"
-    transform_scores_to_labels: True
-    use_hter_as_label: False
-    # max_dataset_size: 64          # for quick testing
+    # max_dataset_size: 1000          # for quick testing
     # is_original: null               # filter out samples by originality: True, False, or None (no filter, default)
 
     # early stopping
@@ -39,22 +36,25 @@ train:
     # factual flow
     # ckpt: null
 
+    # 10% (remember to change sparsemap_budget below)
+    # factual_ckpt:
     # 20%
-    factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version27vf0lne/checkpoints/epoch=7.ckpt
+    # factual_ckpt:
     # 30%
-    #factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version25ars3wn/checkpoints/epoch=7.ckpt
+    # factual_ckpt:
     # 40%
-    #factual_ckpt: experiments/cfrat-mlqepe-sparsemap-full-transformer/version2r1fi64q/checkpoints/epoch=6.ckpt
+    # factual_ckpt:
+    # 50%
+    # factual_ckpt:
 
     load_tokenizer: False
     load_label_encoder: False
-    tokenizer: 'google/mt5-small'
-    gen_arch: 'google/mt5-small'
+    tokenizer: 't5-small'
+    gen_arch: 't5-small'
     gen_emb_requires_grad: False
     gen_encoder_requires_grad: False
     gen_use_decoder: False
-    pred_arch: 'google/mt5-small'
-    pred_bidirectional: False
+    pred_arch: 't5-small'
     pred_emb_requires_grad: False
     pred_encoder_requires_grad: False
     pred_output_requires_grad: False
@@ -62,8 +62,8 @@ train:
     explainer: 'sparsemap'
     explainer_pre_mlp: True
     explainer_requires_grad: False
-    explainer_mask_token_type_id: 0
-    sparsemap_budget: 20
+    explainer_mask_token_type_id: 0  # edit the premise only
+    sparsemap_budget: 10
     sparsemap_temperature: 0.01
     sparsemap_transition: 0.0001
     dropout: 0.1
@@ -74,11 +74,11 @@ train:
     temperature: 1.0
 
     # editor
-    cf_gen_arch: "google/mt5-base"
+    cf_gen_arch: "t5-small"
     cf_prepend_label_type: "gold"
     cf_z_type: "pred"
-    cf_task_name: "qe"
-    cf_explainer_mask_token_type_id: 0  # edit the mt only
+    cf_task_name: "nli"
+    cf_explainer_mask_token_type_id: 0  # edit the premise only
     cf_classify_edits: True
 
     # https://huggingface.co/docs/transformers/v4.23.1/en/main_classes/text_generation#transformers.generation_utils.GenerationMixin.generate
@@ -98,7 +98,7 @@ train:
 
     # model: optimizer
     optimizer: 'adamw'
-    lr: 0.00001
+    lr: 0.0001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False

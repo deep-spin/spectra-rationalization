@@ -27,6 +27,7 @@ class ImdbDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.max_dataset_size = d_params.get("max_dataset_size", None)
+        self.create_validation_split = d_params.get("create_validation_split", True)
 
         # objects
         self.dataset = None
@@ -105,26 +106,31 @@ class ImdbDataModule(BaseDataModule):
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
-        modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
-        self.dataset["train"] = modified_dataset["train"]
-        self.dataset["validation"] = modified_dataset["test"]
-
         # remove unnecessary data
         del self.dataset['unsupervised']
+
+        if self.create_validation_split:
+            modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
+            self.dataset["train"] = modified_dataset["train"]
+            self.dataset["validation"] = modified_dataset["test"]
 
         # cap dataset size - useful for quick testing
         if self.max_dataset_size is not None:
             self.dataset["train"] = self.dataset["train"].select(range(self.max_dataset_size))
-            self.dataset["validation"] = self.dataset["validation"].select(range(self.max_dataset_size))
+            if self.create_validation_split:
+                self.dataset["validation"] = self.dataset["validation"].select(range(self.max_dataset_size))
             self.dataset["test"] = self.dataset["test"].select(range(self.max_dataset_size))
 
         # build tokenize rand label encoder
         if self.tokenizer is None:
             # build tokenizer info (vocab + special tokens) based on train and validation set
-            tok_samples = chain(
-                self.dataset["train"]["text"],
-                self.dataset["validation"]["text"]
-            )
+            if self.create_validation_split:
+                tok_samples = chain(
+                    self.dataset["train"]["text"],
+                    self.dataset["validation"]["text"]
+                )
+            else:
+                tok_samples = self.dataset["train"]["text"]
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # function to map strings to ids
