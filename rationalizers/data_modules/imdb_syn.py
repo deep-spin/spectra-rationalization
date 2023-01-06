@@ -1,3 +1,4 @@
+import re
 from itertools import chain
 
 import datasets as hf_datasets
@@ -13,7 +14,7 @@ class SyntheticImdbDataModule(ImdbDataModule):
         super().__init__(d_params, tokenizer)
         self.synthetic_edits_path = d_params["synthetic_edits_path"]
         self.filter_invalid_edits = d_params.get("filter_invalid_edits", False)
-        self.augment_as_columns = False  # not supported right now (todo: create new data module)
+        self.max_synthetic_edits = d_params.get("max_synthetic_edits", 99999999)
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
@@ -55,26 +56,24 @@ class SyntheticImdbDataModule(ImdbDataModule):
             ex['orig_z'] = eval(ex['orig_z'])
             ex['edits_z_pre'] = eval(ex['edits_z_pre'])
             ex['edits_z_pos'] = eval(ex['edits_z_pos'])
+            edits_ids = self.tokenizer.convert_tokens_to_ids(ex['edits_texts'].strip().split())
+            ex['edits_texts'] = trim(self.tokenizer.decode(edits_ids))
             return ex
         ds_syn = ds_syn.map(fix_data)
 
         if self.filter_invalid_edits:
             # filter out examples with wrong predictions (i.e. edits that do not change the prediction)
-            ds_syn = ds_syn.filter(lambda ex: ex["orig_predictions"] == ex["edits_predictions"])
+            ds_syn = ds_syn.filter(lambda ex: ex["edits_labels"] == ex["edits_predictions"])
 
-        if self.augment_as_columns:
-            # add synthetic edits as columns to the original dataset
-            self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=1)
-        else:
-            # match column names and features
-            ds_syn = ds_syn.rename_column("edits_texts", "text")
-            ds_syn = ds_syn.rename_column("edits_labels", "label")
-            ds_syn = ds_syn.remove_columns(
-                ["orig_predictions", "orig_z", "edits_predictions", "edits_z_pre", "edits_z_pos"]
-            )
-            ds_syn = ds_syn.cast_column('label', hf_datasets.ClassLabel(names=['neg', 'pos']))
-            # add synthetic edits as new examples to the original dataset
-            self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=0)
+        # match column names and features
+        ds_syn = ds_syn.rename_column("edits_texts", "text")
+        ds_syn = ds_syn.rename_column("edits_labels", "label")
+        ds_syn = ds_syn.remove_columns(
+            ["orig_predictions", "orig_z", "edits_predictions", "edits_z_pre", "edits_z_pos"]
+        )
+        ds_syn = ds_syn.cast_column('label', hf_datasets.ClassLabel(names=['neg', 'pos']))
+        # add synthetic edits as new examples to the original dataset
+        self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=0)
 
         # create a validation set
         modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
@@ -122,3 +121,12 @@ class SyntheticImdbDataModule(ImdbDataModule):
             columns=["input_ids", "label"],
             output_all_columns=True,
         )
+
+
+def trim(text):
+    text = text.replace('<', ' <').replace('>', '> ')
+    text = text.replace('""', ' "').replace("''", "'")
+    text = text.replace('<unk> br', '<br')
+    text = re.sub(r'( </s>)+', ' </s>', text)
+    text = re.sub(r'\ +', ' ', text).strip()
+    return text

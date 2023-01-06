@@ -27,7 +27,7 @@ class MLQEPEDataModule(BaseDataModule):
         # hyperparams
         self.lp = d_params.get("lp", "all-all")
         self.use_hter_as_label = d_params.get("use_hter_as_label", False)
-        self.transform_scores_to_labels = d_params.get("transform_scores_to_labels", False)
+        self.transform_scores_to_labels = d_params.get("transform_scores_to_labels", True)
         self.filter_error_min = d_params.get("filter_error_min", None)
         self.filter_error_max = d_params.get("filter_error_max", None)
         self.batch_size = d_params.get("batch_size", 32)
@@ -98,11 +98,11 @@ class MLQEPEDataModule(BaseDataModule):
         if self.use_hter_as_label:
             labels = stack_labels(collated_samples["hter"])
             if self.transform_scores_to_labels:
-                labels = ((labels >= 0.30) & (labels <= 1.0)).long()
+                labels = 1 - ((labels >= 0.30) & (labels <= 1.0)).long()  # bad: 0, ok: 1
         else:
             labels = stack_labels(collated_samples["da"])
             if self.transform_scores_to_labels:
-                labels = (labels <= 70).long()
+                labels = 1 - (labels <= 70).long()  # bad: 0, ok: 1
 
         # keep tokens in raw format
         src_tokens = collated_samples["src"]

@@ -52,7 +52,7 @@ class RevisedSNLIDataset(datasets.GeneratorBasedBuilder):
             description="Samples from the SNLI dataset revised by Kaushik et al. (2020)",
             side=side,
         )
-        for side in ['premise', 'hypothesis']
+        for side in ['premise', 'hypothesis', 'both']
     ]
 
     def _info(self):
@@ -117,18 +117,24 @@ class RevisedSNLIDataset(datasets.GeneratorBasedBuilder):
         df = pd.read_csv(filepath, delimiter='\t')
         i = 0
         for (_, g) in df.groupby('batch_id'):
-            d_orig = get_data(g, prefix='', idx=0)
-            if self.config.side == 'premise':
-                # select edited premises as counterfactuals
-                sub_g = g[g['sentence1'] != g.iloc[0]['sentence1']]
+            if self.config.side == 'both':
+                for j in range(len(g)):
+                    row = get_data(g, prefix='', idx=j)
+                    i += 1
+                    yield i - 1, row
             else:
-                # select edited hypotheses as counterfactuals
-                sub_g = g[g['sentence2'] != g.iloc[0]['sentence2']]
-            # some samples have a single or no counterfactual for a specified side
-            d_cf1 = None if len(sub_g) < 1 else get_data(sub_g, prefix='', idx=0)
-            d_cf2 = None if len(sub_g) < 2 else get_data(sub_g, prefix='', idx=1)
-            for row in [d_orig, d_cf1, d_cf2]:
-                if row is None:
-                    continue
-                i += 1
-                yield i - 1, row
+                d_orig = get_data(g, prefix='', idx=0)
+                if self.config.side == 'premise':
+                    # select edited premises as counterfactuals
+                    sub_g = g[g['sentence1'] != g.iloc[0]['sentence1']]
+                else:
+                    # select edited hypotheses as counterfactuals
+                    sub_g = g[g['sentence2'] != g.iloc[0]['sentence2']]
+                # some samples have a single or no counterfactual for a specified side
+                d_cf1 = None if len(sub_g) < 1 else get_data(sub_g, prefix='', idx=0)
+                d_cf2 = None if len(sub_g) < 2 else get_data(sub_g, prefix='', idx=1)
+                for row in [d_orig, d_cf1, d_cf2]:
+                    if row is None:
+                        continue
+                    i += 1
+                    yield i - 1, row

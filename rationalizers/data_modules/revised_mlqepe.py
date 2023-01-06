@@ -13,8 +13,8 @@ from rationalizers.data_modules.base import BaseDataModule
 from rationalizers.data_modules.utils import concat_sequences
 
 
-class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
-    """DataModule for the Revised MLQEPE Dataset."""
+class RevisedMLQEPEDataModule(BaseDataModule):
+    """DataModule for the MLQEPE Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         """
@@ -22,14 +22,10 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
         """
         super().__init__(d_params)
         # hard-coded stuff
-        self.path = "./rationalizers/custom_hf_datasets/revised_mlqepe_cf.py"
-        self.is_multilabel = True
-        self.nb_classes = 2
+        self.path = "./rationalizers/custom_hf_datasets/mlqepe.py"
 
         # hyperparams
         self.lp = d_params.get("lp", "all-all")
-        self.use_hter_as_label = d_params.get("use_hter_as_label", False)
-        self.transform_scores_to_labels = d_params.get("transform_scores_to_labels", True)
         self.filter_error_min = d_params.get("filter_error_min", None)
         self.filter_error_max = d_params.get("filter_error_max", None)
         self.batch_size = d_params.get("batch_size", 32)
@@ -37,15 +33,12 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
         self.vocab_min_occurrences = d_params.get("vocab_min_occurrences", 1)
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
-        self.concat_inputs = True
+        self.hter_threshold = d_params.get("hter_threshold", (0.30, 1.0))
+        self.da_threshold = d_params.get("da_threshold", None)
 
         # fix nb classes
-        if self.transform_scores_to_labels:
-            self.is_multilabel = True
-            self.nb_classes = 2
-        else:
-            self.is_multilabel = False
-            self.nb_classes = 1
+        self.is_multilabel = True
+        self.nb_classes = 2
 
         # objects
         self.dataset = None
@@ -96,35 +89,24 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
 
         # pad and stack input ids
         input_ids, lengths = pad_and_stack_ids(collated_samples["input_ids"])
-        cf_input_ids, cf_lengths = pad_and_stack_ids(collated_samples["cf_input_ids"])
         token_type_ids, _ = pad_and_stack_ids(collated_samples["token_type_ids"], pad_id=2)
-        cf_token_type_ids, _ = pad_and_stack_ids(collated_samples["cf_token_type_ids"], pad_id=2)
 
         # stack labels
-        labels = stack_labels(collated_samples["label"])  # fix bug in dataset to match with mlqepe.py
-        cf_labels = stack_labels(collated_samples["cf_label"])  # fix bug in dataset to match with mlqepe.py
-        # stack labels
-        # if self.use_hter_as_label:
-        #     labels = stack_labels(collated_samples["hter"])
-        #     cf_labels = stack_labels(collated_samples["cf_hter"])
-        #     if self.transform_scores_to_labels:
-        #         labels = 1 - ((labels >= 0.30) & (labels <= 1.0)).long()
-        #         cf_labels = 1 - ((cf_labels >= 0.30) & (cf_labels <= 1.0)).long()
-        # else:
-        #     labels = stack_labels(collated_samples["da"])
-        #     cf_labels = stack_labels(collated_samples["cf_da"])
-        #     if self.transform_scores_to_labels:
-        #         labels = 1 - (labels <= 70).long()
-        #         cf_labels = 1 - (cf_labels <= 70).long()
+        labels = stack_labels(collated_samples["label"])
 
         # keep tokens in raw format
         src_tokens = collated_samples["src"]
         mt_tokens = collated_samples["mt"]
-        cf_src_tokens = collated_samples["cf_src"]
-        cf_mt_tokens = collated_samples["cf_mt"]
+        pe_tokens = collated_samples["pe"]
+        tokens = [y.strip() + f' {self.sep_token} {self.bos_token} ' + x.strip() for y, x in zip(mt_tokens, src_tokens)]
+
+        # metadata useful for evaluation
+        src_tags = collated_samples["src_tags"]
+        mt_tags = collated_samples["mt_tags"]
+        src_mt_aligns = collated_samples["src_mt_aligns"]
+        lps = collated_samples["lp"]
 
         # metadata
-        batch_id = collated_samples["batch_id"]
         is_original = collated_samples["is_original"]
 
         # return batch to the data loader
@@ -133,16 +115,15 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
             "token_type_ids": token_type_ids,
             "lengths": lengths,
             "labels": labels,
+            "tokens": tokens,
             "src_tokens": src_tokens,
             "mt_tokens": mt_tokens,
-            "cf_input_ids": cf_input_ids,
-            "cf_token_type_ids": cf_token_type_ids,
-            "cf_lengths": cf_lengths,
-            "cf_labels": cf_labels,
-            "cf_src_tokens": cf_src_tokens,
-            "cf_mt_tokens": cf_mt_tokens,
-            "batch_id": batch_id,
-            "is_original": is_original,
+            "pe_tokens": pe_tokens,
+            "src_tags": src_tags,
+            "mt_tags": mt_tags,
+            "src_mt_aligns": src_mt_aligns,
+            # "is_original": is_original,
+            "lps": lps,
         }
         return batch
 
@@ -155,6 +136,9 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
             lp=self.lp,
+            create_cfs=True,
+            hter_threshold=self.hter_threshold,
+            da_threshold=self.da_threshold,
         )
 
         # build tokenizer
@@ -163,12 +147,8 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
             tok_samples = chain(
                 self.dataset["train"]["src"],
                 self.dataset["train"]["mt"],
-                self.dataset["train"]["cf_src"],
-                self.dataset["train"]["cf_mt"],
                 self.dataset["validation"]["src"],
                 self.dataset["validation"]["mt"],
-                self.dataset["validation"]["cf_src"],
-                self.dataset["validation"]["cf_mt"],
             )
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
@@ -187,40 +167,25 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
                     truncation=True,  # truncate to max length accepted by the model
                     max_length=512,
                 )["input_ids"]
-                cf_src_ids = self.tokenizer(
-                    example["cf_src"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                    max_length=512,
-                )["input_ids"]
-                cf_mt_ids = self.tokenizer(
-                    example["cf_mt"].strip(),
-                    padding=False,  # do not pad, padding will be done later
-                    truncation=True,  # truncate to max length accepted by the model
-                    max_length=512,
-                )["input_ids"]
             else:
                 src_ids = self.tokenizer.encode(example["src"].strip())
                 mt_ids = self.tokenizer.encode(example["mt"].strip())
-                cf_src_ids = self.tokenizer.encode(example["cf_src"].strip())
-                cf_mt_ids = self.tokenizer.encode(example["cf_mt"].strip())
             input_ids, token_type_ids = concat_sequences(mt_ids, src_ids)
-            cf_input_ids, cf_token_type_ids = concat_sequences(cf_mt_ids, cf_src_ids)
             example["input_ids"] = input_ids
             example["token_type_ids"] = token_type_ids
-            example["cf_input_ids"] = cf_input_ids
-            example["cf_token_type_ids"] = cf_token_type_ids
             return example
 
         self.dataset = self.dataset.map(_encode)
         self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
-        self.dataset = self.dataset.filter(lambda example: len(example["cf_input_ids"]) <= self.max_seq_len)
+
+        if 'is_original' in self.dataset['train'].features and self.is_original is not None:
+            self.dataset = self.dataset.filter(lambda example: example["is_original"] == self.is_original)
 
         # filter by error rate
         def filter_error_rate(example):
             error_a = self.filter_error_min if self.filter_error_min is not None else 0.0
             error_b = self.filter_error_max if self.filter_error_max is not None else 1.0
-            return (error_a <= example['hter'] <= error_b) and (error_a <= example['cf_hter'] <= error_b)
+            return error_a <= example['hter'] <= error_b
 
         if self.filter_error_min is not None or self.filter_error_max is not None:
             self.dataset = self.dataset.filter(filter_error_rate)
@@ -229,9 +194,7 @@ class CounterfactualRevisedMLQEPEDataModule(BaseDataModule):
         self.dataset.set_format(
             type="torch",
             columns=[
-                "input_ids", "token_type_ids", "label", "da", "hter",
-                "cf_input_ids", "cf_token_type_ids", "cf_label", "cf_da", "cf_hter",
-                "batch_id", "is_original"
+                "input_ids", "token_type_ids", "label", "da", "hter", "is_original"
             ],
             output_all_columns=True
         )

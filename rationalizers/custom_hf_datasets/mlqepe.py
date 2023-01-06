@@ -4,6 +4,7 @@ import os
 import shutil
 
 import datasets
+import numpy as np
 import pandas as pd
 
 
@@ -114,13 +115,19 @@ def create_dataset(fname, lp):
 class MLQEPEDatasetConfig(datasets.BuilderConfig):
     """BuilderConfig for MLQEPEDataset"""
 
-    def __init__(self, lp, **kwargs):
+    def __init__(self, lp, create_cfs=False, hter_threshold=None, da_threshold=None, **kwargs):
         """
         Args:
             lp: language pair (e.g., en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en, en-cs, en-ja, km-en, ps-en)
+            create_cfs: whether to create the cfs dataset
+            hter_interval (tuple of float): examples with HTER score outside this interval will be filtered out
+            da_threshold (float): examples with DA score above this threshold will be filtered out
             **kwargs: keyword arguments forwarded to super.
         """
         self.lp = lp
+        self.create_cfs = create_cfs
+        self.hter_threshold = hter_threshold
+        self.da_threshold = da_threshold
         super().__init__(**kwargs)
 
 
@@ -156,6 +163,8 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
                     "da": datasets.Value("float"),
                     "hter": datasets.Value("float"),
                     "lp": datasets.Value("string"),
+                    "label": datasets.Value("int32"),
+                    "is_original": datasets.Value("int32"),
                 }
             ),
             # If there's a common (input, target) tuple from the features,
@@ -214,6 +223,13 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, filepath, split):
         """Yields examples."""
         df = pd.read_csv(filepath, delimiter='\t')
+
+        if self.config.create_cfs:
+            print('\nCreating counterfactuals...')
+            print('hter_threshold:', self.config.hter_threshold)
+            print('da_threshold:', self.config.da_threshold)
+            df = create_counterfactuals(df, self.config.hter_threshold, self.config.da_threshold)
+
         for i, row in df.iterrows():
             src_mt_aligns = None
             if 'src_mt_aligns' in df.columns:
@@ -230,4 +246,43 @@ class MLQEPEDataset(datasets.GeneratorBasedBuilder):
                 "da": row['da'],
                 "hter": row['hter'],
                 "lp": row['lp'] if 'lp' in df.columns else self.config.lp,
+                "label": row['gold_label'] if 'gold_label' in df.columns else None,
+                "is_original": row['is_original'] == 1 if 'is_original' in df.columns else True,
             }
+
+
+def create_counterfactuals(df, hter_interval=None, da_threshold=None):
+    """
+    Create counterfactuals from QE-PE pairs.
+
+    Args:
+        df (pd.DataFrame): QE-PE pairs.
+        hter_interval (tuple of float): examples with HTER score outside this interval will be filtered out
+        da_threshold (float): examples with DA score above this threshold will be filtered out
+
+    Returns:
+        pd.DataFrame containing `src, mt, pe, da, hter, batch_id, gold_label, cf_gold_label, is_original` columns
+
+    """
+    if hter_interval is not None:
+        # filter based on HTER to get bad-quality translations
+        df = df[(hter_interval[0] <= df['hter']) & (df['hter'] <= hter_interval[1])]
+    else:
+        # filter based on DA to get bad-quality translations
+        df = df[df['da'] <= da_threshold]
+
+    # binarize labels
+    df['gold_label'] = np.zeros(len(df), dtype=int)  # start with bad translations
+
+    # repeat rows
+    df = df.iloc[np.arange(len(df)).repeat(2)]
+
+    # get originals rows
+    is_original = np.arange(len(df)) % 2 == 0
+    df['is_original'] = 1 * is_original
+
+    # swap factual and counterfactuals to get new samples with opposite labels
+    df.loc[~is_original, 'mt'] = df.loc[is_original, 'pe'].values
+    df.loc[~is_original, 'gold_label'] = 1 - df.loc[is_original, 'gold_label'].values
+
+    return df.reset_index(drop=True)

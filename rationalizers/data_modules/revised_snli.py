@@ -3,6 +3,7 @@ from itertools import chain
 
 import datasets as hf_datasets
 import nltk
+import numpy as np
 import torch
 from torchnlp.encoders.text import StaticTokenizerEncoder, stack_and_pad_tensors, pad_tensor
 from torchnlp.utils import collate_tensors
@@ -34,6 +35,10 @@ class RevisedSNLIDataModule(BaseDataModule):
         self.max_dataset_size = d_params.get("max_dataset_size", None)
         self.is_original = d_params.get("is_original", None)
         self.concat_inputs = d_params.get("concat_inputs", True)
+        self.swap_pair = d_params.get("swap_pair", False)
+        self.filter_neutrals = d_params.get("filter_neutrals", False)
+        if self.filter_neutrals:
+            self.nb_classes = 2
 
         # objects
         self.dataset = None
@@ -95,7 +100,11 @@ class RevisedSNLIDataModule(BaseDataModule):
             # keep tokens in raw format
             prem_tokens = collated_samples["prem"]
             hyp_tokens = collated_samples["hyp"]
-            tokens = [p.strip() + ' ' + self.sep_token + ' ' + h.strip() for p, h in zip(prem_tokens, hyp_tokens)]
+
+            if not self.swap_pair:
+                tokens = [p.strip() + ' ' + self.sep_token + ' ' + h.strip() for p, h in zip(prem_tokens, hyp_tokens)]
+            else:
+                tokens = [p.strip() + ' ' + self.sep_token + ' ' + h.strip() for p, h in zip(hyp_tokens, prem_tokens)]
 
             # metadata
             batch_id = collated_samples["batch_id"]
@@ -173,12 +182,20 @@ class RevisedSNLIDataModule(BaseDataModule):
         def _encode(example: dict):
             if self.concat_inputs:
                 if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                    input_enc = self.tokenizer(
-                        example["prem"].strip(),
-                        example["hyp"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )
+                    if not self.swap_pair:
+                        input_enc = self.tokenizer(
+                            example["prem"].strip(),
+                            example["hyp"].strip(),
+                            padding=False,  # do not pad, padding will be done later
+                            truncation=True,  # truncate to max length accepted by the model
+                        )
+                    else:
+                        input_enc = self.tokenizer(
+                            example["hyp"].strip(),
+                            example["prem"].strip(),
+                            padding=False,  # do not pad, padding will be done later
+                            truncation=True,  # truncate to max length accepted by the model
+                        )
                     example["input_ids"] = input_enc["input_ids"]
                     if 'token_type_ids' in input_enc:
                         example["token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
@@ -186,9 +203,14 @@ class RevisedSNLIDataModule(BaseDataModule):
                         example["token_type_ids"] = 1 - torch.cumprod(
                             torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
                 else:
-                    example["input_ids"] = self.tokenizer.encode(
-                        example["prem"].strip() + ' ' + self.sep_token + ' ' + example["hyp"].strip()
-                    )
+                    if not self.swap_pair:
+                        example["input_ids"] = self.tokenizer.encode(
+                            example["prem"].strip() + ' ' + self.sep_token + ' ' + example["hyp"].strip()
+                        )
+                    else:
+                        example["input_ids"] = self.tokenizer.encode(
+                            example["hyp"].strip() + ' ' + self.sep_token + ' ' + example["prem"].strip()
+                        )
                     example["token_type_ids"] = 1 - torch.cumprod(
                         torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
             else:
@@ -218,6 +240,22 @@ class RevisedSNLIDataModule(BaseDataModule):
 
         if self.is_original is not None:
             self.dataset = self.dataset.filter(lambda example: example["is_original"] == self.is_original)
+
+        if self.filter_neutrals:
+            def fix_labels(ex):
+                ex["label"] = 1 if ex["label"] == 2 else 0
+                return ex
+
+            self.dataset = self.dataset.filter(lambda example: example["label"] != 1)
+            self.dataset = self.dataset.map(fix_labels)
+
+        def get_dist(y):
+            vals, counts = np.unique(y, return_counts=True)
+            return dict(zip(vals, counts / counts.sum()))
+
+        print(get_dist(self.dataset["train"]["label"]))
+        print(get_dist(self.dataset["validation"]["label"]))
+        print(get_dist(self.dataset["test"]["label"]))
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         if self.concat_inputs:

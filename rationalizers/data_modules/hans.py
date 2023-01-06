@@ -1,7 +1,7 @@
-from rationalizers.data_modules import SNLIDataModule
+from rationalizers.data_modules.snli import SNLIDataModule
 
 
-class RevisedHANSDataModule(SNLIDataModule):
+class HANSDataModule(SNLIDataModule):
     """DataModule for HANS Dataset."""
 
     def __init__(self, d_params: dict, tokenizer: object = None):
@@ -12,7 +12,7 @@ class RevisedHANSDataModule(SNLIDataModule):
         # hard-coded stuff
         self.path = "hans"  # hf_datasets will handle everything
         self.is_multilabel = True
-        self.nb_classes = 2  # entailment, neutral, contradiction
+        self.nb_classes = 2  # entailment, and non-entailment
 
     def setup(self, stage: str = None):
         super().setup(stage=stage)

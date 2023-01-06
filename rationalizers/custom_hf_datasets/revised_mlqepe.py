@@ -12,7 +12,7 @@ This dataset contains src, mt, da & hter scores for 7 language pairs
 (en-de, en-zh, et-en, ne-en, ro-en, ru-en, si-en).
 """
 
-_URL = "https://www.dropbox.com/s/nmdi5vgdrwefnmg/mlqe-pe.tar.gz?dl=1"
+_URL = "https://www.dropbox.com/s/r8r2nnl301p3nbj/mlqe-pe.tar.gz?dl=1"
 
 
 class MLQEPEDatasetConfig(datasets.BuilderConfig):
@@ -43,7 +43,7 @@ class RevisedMLQEPEDataset(datasets.GeneratorBasedBuilder):
             description="Samples from the MLQEPE dataset with counterfactuals.",
             lp=lp,
         )
-        for lp in ["en-de", "en-zh", "et-en", "ne-en", "ro-en", "ru-en", "si-en"]
+        for lp in ["en-de", "en-zh", "et-en", "ne-en", "ro-en", "ru-en", "si-en", "all-all"]
     ]
 
     def _info(self):
