@@ -15,7 +15,8 @@ from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.explainers import available_explainers
 from rationalizers.lightning_models.highlights.transformers.base import TransformerBaseRationalizer
 from rationalizers.lightning_models.utils import make_input_for_t5, prepend_label_for_t5, merge_inputs_for_t5, \
-    get_t5_sentinel_ids, make_input_for_ct5, fix_t5_generated_inputs, get_contrast_label
+    get_t5_sentinel_ids, make_input_for_ct5, fix_t5_generated_inputs, get_contrast_label, \
+    prepend_label_for_t5_variable_length, remove_label_for_t5_variable_length
 from rationalizers.modules.metrics import evaluate_rationale
 from rationalizers.utils import (
     get_z_stats, freeze_module, get_rationales, unroll, get_html_rationales,
@@ -69,6 +70,7 @@ class BaseEditor(TransformerBaseRationalizer):
         self.cf_explainer_mask_token_type_id = h_params.get("cf_explainer_mask_token_type_id", None)
         self.cf_classify_edits = h_params.get("cf_classify_edits", False)
         self.generation_mode = False
+        self.backwards_compat = False
 
         # define sentinel range
         # self.sentinel_a, self.sentinel_b = len(self.tokenizer) - 100, len(self.tokenizer) - 1
@@ -117,9 +119,10 @@ class BaseEditor(TransformerBaseRationalizer):
         mask: torch.BoolTensor = None,
         token_type_ids: torch.LongTensor = None,
         y: torch.LongTensor = None,
+        y_contrast: torch.LongTensor = None,
         z: torch.LongTensor = None,
         contrast_label: bool = False,
-        current_epoch=None,
+        current_epoch: int = None,
     ):
         """
         Compute forward-pass.
@@ -128,6 +131,7 @@ class BaseEditor(TransformerBaseRationalizer):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param token_type_ids: mask tensor for explanation positions. torch.LongTensor of shape [B, T]
         :param y: labels tensor. torch.LongTensor of shape [B]
+        :param y_contrast: contrastive labels tensor. torch.LongTensor of shape [B]
         :param z: rationales tensor. torch.LongTensor of shape [B, T]
         :param contrast_label: whether to prepend a contrastive label or not
         :param current_epoch: int represents the current epoch.
@@ -145,23 +149,66 @@ class BaseEditor(TransformerBaseRationalizer):
 
         # get a contrast label
         if contrast_label:
-            y_prepend = get_contrast_label(y_prepend, self.nb_classes, self.cf_task_name)
+            if self.cf_task_name == 'nli' and self.nb_classes > 2:
+                # Option 1.
+                # get the least likely label from the model
+                y_prepend = y_hat.argmin(-1)
+                # but in case that the least likely label is the true label, get the argmax instead
+                y_prepend[y_prepend == y] = y_hat.argmax(-1)[y_prepend == y]
+
+                # Option 2.
+                # swap entailments with contradictions
+                # y_prepend = 2 - y_prepend
+                # for neutrals, take the least probable class (as in mice)
+                # y_prepend[y_prepend == 1] = y_hat.argmin(-1)[y_prepend == 1]
+                # but in case that is the correct label, we take the predicted label
+                # y_prepend[y_prepend == y] = y_hat.argmax(-1)[y_prepend == y]
+
+                # Option 3.
+                # sample a label different from y_gold
+                # tmp = torch.rand(y_prepend.shape[0], self.nb_classes, device=y_prepend.device)
+                # ar = torch.arange(y_prepend.shape[0], device=y_prepend.device)
+                # tmp[ar, y_prepend] = -1.0
+                # y_prepend = tmp.argsort(-1)[:, 1]
+            elif self.cf_task_name == '20news':
+                y_prepend = y_contrast
+            else:
+                y_prepend = 1 - y_prepend
 
         # edit only a single input in case we have concatenated inputs
         if self.cf_explainer_mask_token_type_id is not None and token_type_ids is not None:
-            e_mask = mask & (token_type_ids == self.cf_explainer_mask_token_type_id)
-            z_prepend = z_prepend.masked_fill(~e_mask, 0)
+            if isinstance(self.cf_explainer_mask_token_type_id, int):
+                e_mask = mask & (token_type_ids == self.cf_explainer_mask_token_type_id)
+                z_prepend = z_prepend.masked_fill(~e_mask, 0)
+
+        if self.cf_task_name == 'nli' or self.cf_task_name == 'qe':
+            # do not select EOS tokens to be edited
+            z_prepend = z_prepend.masked_fill(x == self.eos_token_id, 0)
 
         # prepend label to input and rationale
-        x_prepend, z_prepend, mask_prepend = prepend_label_for_t5(
-            x=x,
-            y=y_prepend,
-            z=z_prepend,
-            mask=mask,
-            tokenizer=self.tokenizer,
-            max_length=512,
-            task_name=self.cf_task_name
-        )
+        if self.backwards_compat:
+            x_prepend, z_prepend, mask_prepend = prepend_label_for_t5(
+                x=x,
+                y=y_prepend,
+                z=z_prepend,
+                mask=mask,
+                tokenizer=self.tokenizer,
+                max_length=512,
+                task_name=self.cf_task_name,
+                nb_classes=self.nb_classes,
+            )
+        else:
+            x_prepend, z_prepend, mask_prepend = prepend_label_for_t5_variable_length(
+                x=x,
+                y=y_prepend,
+                z=z_prepend,
+                mask=mask,
+                tokenizer=self.tokenizer,
+                max_length=512,
+                task_name=self.cf_task_name,
+                nb_classes=self.nb_classes,
+                pad_id=self.pad_token_id,
+            )
 
         # counterfactual flow
         x_tilde, logits, x_enc, x_dec, z_enc, z_dec = self.get_counterfactual_flow(
@@ -171,32 +218,46 @@ class BaseEditor(TransformerBaseRationalizer):
         )
 
         # return everything as output (useful for computing the loss)
-        return (z_hat, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec)
+        return (z_hat, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec, y_prepend)
 
-    def classify_edits(self, x_tilde, x_enc, z_enc):
+    def merge_edits(self, x_tilde, x_enc, z_enc, remove_prepended_label=True):
         """
         Classify edits.
 
         :param x_tilde: decoder output. torch.LongTensor of shape [B, T]
         :param x_enc: encoder input. torch.LongTensor of shape [B, T]
-        :param z_enc: rationale tensor. torch.FloatTensor of shape [B, T]
+        :param z_enc: rationale tensor. torch.LongTensor of shape [B, T]
+        :param remove_prepended_label: whether to remove the prepended label or not
         """
         with torch.no_grad():
-            x_edit = x_tilde if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
-            x_edit = fix_t5_generated_inputs(
-                x_edit, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
-            )
-            x_edit, _ = merge_inputs_for_t5(
-                x_enc, x_edit, z_enc,
-                pad_id=self.pad_token_id, eos_id=self.eos_token_id,
-                idx_a=self.sentinel_a, idx_b=self.sentinel_b
-            )
-            x_edit = x_edit[:, 2:]  # remove the prepend label
-            mask_edit = x_edit != self.tokenizer.pad_token_id
-            token_type_ids_edit = 1 - torch.cumprod(x_edit != self.eos_token_id, dim=-1)
-            token_type_ids_edit = token_type_ids_edit.masked_fill(~mask_edit, 2)
-            z_cf_hat, y_cf_hat = self.get_factual_flow(x_edit, mask=mask_edit, token_type_ids=token_type_ids_edit)
-        return z_cf_hat, y_cf_hat
+            x_edit = x_tilde.clone() if x_tilde.dim() == 2 else x_tilde.argmax(dim=-1)
+            if 't5' not in self.cf_gen_arch:
+                z_tilde = (z_enc > 0).long()
+                x_edit = z_tilde * x_edit + (1 - z_tilde) * x_edit
+            else:
+                # fix repeated inputs for t5 (up to repetitions of size 3 -> k=2)
+                x_edit = fix_t5_generated_inputs(
+                    x_edit, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
+                x_edit, z_tilde = merge_inputs_for_t5(
+                    x_enc, x_edit, z_enc,
+                    pad_id=self.pad_token_id, eos_id=self.eos_token_id,
+                    idx_a=self.sentinel_a, idx_b=self.sentinel_b
+                )
+            if remove_prepended_label:
+                if self.backwards_compat:
+                    x_edit = x_edit[:, 2:]
+                    z_tilde = z_tilde[:, 2:]
+                else:
+                    x_edit, z_tilde, _ = remove_label_for_t5_variable_length(
+                        x_edit,
+                        z_tilde,
+                        None,
+                        max_length=512,
+                        task_name=self.cf_task_name,
+                        pad_id=self.pad_token_id
+                    )
+            return x_edit, z_tilde
 
     def get_counterfactual_flow(self, x, z, mask=None):
         """
@@ -352,7 +413,7 @@ class BaseEditor(TransformerBaseRationalizer):
         z_gold = batch.get("z", None)
         prefix = "train"
 
-        (z, preds), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec) = self(
+        (z, preds), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec, y_prepend) = self(
             x=input_ids,
             mask=mask,
             token_type_ids=token_type_ids,
@@ -377,87 +438,107 @@ class BaseEditor(TransformerBaseRationalizer):
         return {"loss": loss, "ps": loss_stats["train_ps"]}
 
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
+        # turn on generation mode for test
+        if prefix == 'test':
+            self.generation_mode = True
+
         input_ids = batch["input_ids"]
         token_type_ids = batch.get("token_type_ids", None)
-        mask = input_ids != constants.PAD_ID
+        mask = ~torch.eq(input_ids, self.pad_token_id)
         labels = batch["labels"]
         z_gold = batch.get("z", None)
+        contrast_labels = batch.get("contrast_labels", None)
 
         # forward-pass
-        (z, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec) = self(
-            x=input_ids,
-            mask=mask,
+        (z, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec, y_prepend) = self(
+            x=input_ids.clone(),
+            mask=mask.clone(),
             token_type_ids=token_type_ids,
-            y=labels,
+            y=labels.clone(),
             z=z_gold,
             contrast_label=False,
             current_epoch=self.current_epoch
         )
-        # classify the generated edits
-        z_edit, y_edit_hat = z, y_hat
-        if self.cf_classify_edits:
-            z_edit, y_edit_hat = self.classify_edits(x_tilde, x_enc, z_enc)
 
-        # forward pass with contrastive labels
-        _, (ct_x_tilde, _, ct_x_enc, _, ct_z_enc, _) = self(
-            x=input_ids,
-            mask=mask,
-            token_type_ids=token_type_ids,
-            y=labels,
-            z=z_gold,
-            contrast_label=True,
-            current_epoch=self.current_epoch
-        )
-        # classify the generated contrastive edits
-        ct_z_edit, ct_y_edit_hat = z, y_hat
+        # merge edits
+        x_edit, z_tilde = self.merge_edits(x_tilde, x_enc, z_enc, remove_prepended_label=True)
+        mask_edit = ~torch.eq(x_edit, self.pad_token_id)
+
+        # classify the generated edits using the factual classifier
         if self.cf_classify_edits:
-            ct_z_edit, ct_y_edit_hat = self.classify_edits(ct_x_tilde, ct_x_enc, ct_z_enc)
+            if token_type_ids is not None:
+                token_type_ids_edit = 1 - torch.cumprod(~torch.eq(x_edit, self.eos_token_id), dim=-1)
+                token_type_ids_edit = token_type_ids_edit.masked_fill(~mask_edit, 2)
+            else:
+                token_type_ids_edit = None
+            z_edit, y_edit_hat = self.get_factual_flow(x_edit, mask=mask_edit, token_type_ids=token_type_ids_edit)
+        else:
+            z_edit, y_edit_hat = z, y_hat
 
         # compute factual loss
         loss, loss_stats = self.get_counterfactual_loss(logits, x_dec, z, mask, prefix=prefix)
         self.logger.agg_and_log_metrics(loss_stats, step=None)
 
         # log metrics
-        self.log(f"{prefix}_sum_loss", loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False,)
+        self.log(f"{prefix}_sum_loss", loss.item(), prog_bar=True, logger=False, on_step=True, on_epoch=False, )
+
+        # forward pass with contrastive labels
+        _, (ct_x_tilde, _, ct_x_enc, _, ct_z_enc, _, ct_y_prepend) = self(
+            x=input_ids.clone(),
+            mask=mask.clone(),
+            token_type_ids=token_type_ids,
+            y=labels.clone(),
+            z=z_gold,
+            contrast_label=True,
+            current_epoch=self.current_epoch,
+            y_contrast=contrast_labels
+        )
+
+        # merge edits
+        ct_x_edit, ct_z_tilde = self.merge_edits(ct_x_tilde, ct_x_enc, ct_z_enc, remove_prepended_label=True)
+        ct_mask_edit = ~torch.eq(ct_x_edit, self.pad_token_id)
+
+        # classify the generated contrastive edits
+        if self.cf_classify_edits:
+            if token_type_ids is not None:
+                ct_token_type_ids_edit = 1 - torch.cumprod(~torch.eq(ct_x_edit, self.eos_token_id), dim=-1)
+                ct_token_type_ids_edit = ct_token_type_ids_edit.masked_fill(~ct_mask_edit, 2)
+            else:
+                ct_token_type_ids_edit = None
+            ct_z_edit, ct_y_edit_hat = self.get_factual_flow(
+                ct_x_edit, mask=ct_mask_edit, token_type_ids=ct_token_type_ids_edit
+            )
+        else:
+            ct_z_edit, ct_y_edit_hat = z, y_hat
 
         # recover tokens from ids
-        def get_edit_tokens(x_tilde_, x_enc_, z_enc_):
-            # merge rationales
-            gen_ids = x_tilde_.clone() if x_tilde_.dim() == 2 else x_tilde_.argmax(dim=-1)
-            # fix repeated inputs for t5 (up to repetitions of size 3 -> k=2)
-            gen_ids = fix_t5_generated_inputs(
-                gen_ids, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
-            )
-            # get edits
-            if 't5' not in self.cf_gen_arch:
-                z_tilde = (z_enc_ > 0).long()
-                gen_ids = z_tilde * gen_ids + (1 - z_tilde) * input_ids
-            else:
-                gen_ids, z_tilde = merge_inputs_for_t5(
-                    x_enc_, gen_ids, z_enc_,
-                    pad_id=self.pad_token_id, eos_id=self.eos_token_id,
-                    idx_a=self.sentinel_a, idx_b=self.sentinel_b
-                )
-            tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
-            lengths = (gen_ids != self.pad_token_id).long().sum(-1).tolist()
-            return tokens, z_tilde, lengths
+        lengths = mask.long().sum(dim=-1).tolist()
+        tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        tokens = [tks[:l] for tks, l in zip(tokens, lengths)]
 
-        pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
-        edit_tokens, edit_z_tilde, edit_lengths = get_edit_tokens(x_tilde, x_enc, z_enc)
-        ct_edit_tokens, ct_edit_z_tilde, ct_edit_lengths = get_edit_tokens(ct_x_tilde, ct_x_enc, ct_z_enc)
+        edit_lengths = mask_edit.long().sum(-1).tolist()
+        edit_z_tilde = z_tilde
+        edit_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in x_edit.tolist()]
+        edit_tokens = [tks[:l] for tks, l in zip(edit_tokens, edit_lengths)]
+
+        ct_edit_lengths = ct_mask_edit.long().sum(-1).tolist()
+        ct_edit_z_tilde = ct_z_tilde
+        ct_edit_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in ct_x_edit.tolist()]
+        ct_edit_tokens = [tks[:l] for tks, l in zip(ct_edit_tokens, ct_edit_lengths)]
 
         # output to be stacked across iterations
         output = {
             f"{prefix}_sum_loss": loss.item(),
             f"{prefix}_ps": loss_stats[prefix + "_ps"],
 
-            f"{prefix}_pieces": pieces,
+            f"{prefix}_tokens": tokens,
             f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": labels,
             f"{prefix}_lengths": batch["lengths"],
 
             f"{prefix}_edits": edit_tokens,
+            f"{prefix}_edits_labels": ct_y_prepend,
             f"{prefix}_edits_z": z_edit,
             f"{prefix}_edits_z_tilde": edit_z_tilde,
             f"{prefix}_edits_predictions": y_edit_hat,
@@ -488,7 +569,7 @@ class BaseEditor(TransformerBaseRationalizer):
         stacked_outputs = {k: [x[k] for x in outputs] for k in outputs[0].keys()}
 
         # sample a few examples to be logged in wandb
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_tokens"]))))
         shuffle(idxs)
         idxs = idxs[:10] if prefix != 'test' else idxs[:100]
 
@@ -498,36 +579,31 @@ class BaseEditor(TransformerBaseRationalizer):
 
         if self.log_rationales_in_wandb:
             gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-            gold_ct = get_contrast_label(torch.tensor(gold), self.nb_classes, self.cf_task_name).tolist()
+            gold_ct = select(unroll(stacked_outputs[f"{prefix}_edits_labels"]))
 
             # log rationales
-            pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+            tokens = select(unroll(stacked_outputs[f"{prefix}_tokens"]))
             scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
             pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
             lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-            html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+            html_string = get_html_rationales(tokens, scores, gold, pred, lens)
             self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
             if self.cf_classify_edits:
                 # log rationales of the edited input
-                pieces = select(unroll(stacked_outputs[f"{prefix}_edits"]))
+                tokens = select(unroll(stacked_outputs[f"{prefix}_edits"]))
                 scores = detach(select(unroll(stacked_outputs[f"{prefix}_edits_z"])))
                 pred = detach(select(unroll(stacked_outputs[f"{prefix}_edits_predictions"])))
                 lens = select(unroll(stacked_outputs[f"{prefix}_edits_lengths"]))
-                # remove prepended labels
-                pieces = [p[2:] for p in pieces]
-                lens = [l - 2 for l in lens]
-                html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+                html_string = get_html_rationales(tokens, scores, gold, pred, lens)
                 self.logger.experiment.log({f"{prefix}_edits_rationales": wandb.Html(html_string)})
 
                 # log rationales of the contrastive edited input
-                pieces = select(unroll(stacked_outputs[f"{prefix}_contrast_edits"]))
+                tokens = select(unroll(stacked_outputs[f"{prefix}_contrast_edits"]))
                 scores = detach(select(unroll(stacked_outputs[f"{prefix}_contrast_edits_z"])))
                 pred = detach(select(unroll(stacked_outputs[f"{prefix}_contrast_edits_predictions"])))
                 lens = select(unroll(stacked_outputs[f"{prefix}_contrast_edits_lengths"]))
-                pieces = [p[2:] for p in pieces]
-                lens = [l - 2 for l in lens]
-                html_string = get_html_rationales(pieces, scores, gold_ct, pred, lens)
+                html_string = get_html_rationales(tokens, scores, gold_ct, pred, lens)
                 self.logger.experiment.log({f"{prefix}_contrast_edits_rationales": wandb.Html(html_string)})
 
             # log edits
@@ -573,18 +649,18 @@ class BaseEditor(TransformerBaseRationalizer):
         # save edits
         if self.hparams.save_edits:
             # factual edits
-            pieces = unroll(stacked_outputs[f"{prefix}_edits"])
+            tokens = unroll(stacked_outputs[f"{prefix}_edits"])
             lens = unroll(stacked_outputs[f"{prefix}_edits_lengths"])
             filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_edits.txt')
             shell_logger.info(f'Saving edits to: {filename}')
-            save_counterfactuals(filename, pieces, lens)
+            save_counterfactuals(filename, tokens, lens)
 
             # contrast edits
-            pieces = unroll(stacked_outputs[f"{prefix}_contrast_edits"])
+            tokens = unroll(stacked_outputs[f"{prefix}_contrast_edits"])
             lens = unroll(stacked_outputs[f"{prefix}_contrast_edits_lengths"])
             filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_contrast_edits.txt')
             shell_logger.info(f'Saving contrast edits to: {filename}')
-            save_counterfactuals(filename, pieces, lens)
+            save_counterfactuals(filename, tokens, lens)
 
         # log metrics
         dict_metrics = {
@@ -595,6 +671,7 @@ class BaseEditor(TransformerBaseRationalizer):
         # log classification metrics
         preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_predictions"]), dim=-1)
         labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_labels"]), device=preds.device)
+        edits_labels = torch.tensor(unroll(stacked_outputs[f"{prefix}_edits_labels"]), device=preds.device)
         acc = torchmetrics.functional.accuracy(preds, labels, num_classes=self.nb_classes, average="macro")
         dict_metrics[f"{prefix}_accuracy"] = acc
 
@@ -603,13 +680,8 @@ class BaseEditor(TransformerBaseRationalizer):
             acc = torchmetrics.functional.accuracy(preds, labels, num_classes=self.nb_classes, average="macro")
             dict_metrics[f"{prefix}_edit_accuracy"] = acc
 
-            if self.cf_task_name == 'nli':
-                preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_contrast_edits_predictions"]), dim=-1)
-                acc = 1 - torchmetrics.functional.accuracy(preds, labels, num_classes=self.nb_classes, average="macro")
-            else:
-                labels = get_contrast_label(labels, self.nb_classes, self.cf_task_name)
-                preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_contrast_edits_predictions"]), dim=-1)
-                acc = torchmetrics.functional.accuracy(preds, labels, num_classes=self.nb_classes, average="macro")
+            preds = torch.argmax(torch.cat(stacked_outputs[f"{prefix}_contrast_edits_predictions"]), dim=-1)
+            acc = torchmetrics.functional.accuracy(preds, edits_labels, num_classes=self.nb_classes, average="macro")
             dict_metrics[f"{prefix}_contrast_edit_accuracy"] = acc
 
         # log all saved metrics
@@ -630,66 +702,60 @@ class BaseEditor(TransformerBaseRationalizer):
         return dict_metrics
 
     def predict_step(self, batch: dict, batch_idx: int, dataloader_idx: int = None):
+        assert self.generation_mode is True
+
         input_ids = batch["input_ids"]
         token_type_ids = batch.get("token_type_ids", None)
         labels = batch.get("labels", None)
         z_gold = batch.get("z", None)
+        contrast_labels = batch.get("contrast_labels", None)
         mask = ~torch.eq(input_ids, self.pad_token_id)
 
-        orig_lengths = mask.long().sum(-1)
-        orig_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
-        orig_tokens = [e[:l] for e, l in zip(orig_tokens, orig_lengths)]
-
         # forward-pass
-        (z, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec) = self(
+        (z, y_hat), (x_tilde, logits, x_enc, x_dec, z_enc, z_dec, y_prepend) = self(
             x=input_ids,
             mask=mask,
             token_type_ids=token_type_ids,
             y=labels,
             z=z_gold,
             contrast_label=True,
-            current_epoch=self.current_epoch
+            current_epoch=self.current_epoch,
+            y_contrast=contrast_labels
         )
-        z_edit, y_edit_hat = self.classify_edits(x_tilde, x_enc, z_enc)
+
+        # merge edits
+        x_edit, z_tilde = self.merge_edits(x_tilde, x_enc, z_enc, remove_prepended_label=True)
+        mask_edit = ~torch.eq(x_edit, self.pad_token_id)
+
+        # classify the generated edits using the factual classifier
+        if token_type_ids is not None:
+            token_type_ids_edit = 1 - torch.cumprod(~torch.eq(x_edit, self.eos_token_id), dim=-1)
+            token_type_ids_edit = token_type_ids_edit.masked_fill(~mask_edit, 2)
+        else:
+            token_type_ids_edit = None
+        z_edit, y_edit_hat = self.get_factual_flow(x_edit, mask=mask_edit, token_type_ids=token_type_ids_edit)
 
         # recover tokens from ids
-        def get_edit_tokens(x_tilde_, x_enc_, z_enc_):
-            gen_ids = x_tilde_.clone() if x_tilde_.dim() == 2 else x_tilde_.argmax(dim=-1)
+        orig_lengths = mask.long().sum(-1).tolist()
+        orig_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        orig_tokens = [tks[:l] for tks, l in zip(orig_tokens, orig_lengths)]
+        orig_z = [z_[:l] for z_, l in zip(z, orig_lengths)]
 
-            if 't5' not in self.cf_gen_arch:
-                # merge rationales
-                z_tilde = (z_enc_ > 0).long()
-                gen_ids = z_tilde * gen_ids + (1 - z_tilde) * input_ids
-            else:
-                # fix repeated inputs for t5 (up to repetitions of size 3 -> k=2)
-                gen_ids = fix_t5_generated_inputs(
-                    gen_ids, pad_id=self.pad_token_id, idx_a=self.sentinel_a, idx_b=self.sentinel_b
-                )
-                # merge rationales
-                gen_ids, z_tilde = merge_inputs_for_t5(
-                    x_enc_, gen_ids, z_enc_,
-                    pad_id=self.pad_token_id, eos_id=self.eos_token_id,
-                    idx_a=self.sentinel_a, idx_b=self.sentinel_b
-                )
-            tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in gen_ids.tolist()]
-            lengths = (gen_ids != self.pad_token_id).long().sum(-1).tolist()
-            return tokens, z_tilde, lengths
-
-        edit_tokens, edit_z_tilde, edit_lengths = get_edit_tokens(x_tilde, x_enc, z_enc)
-        edit_tokens = [e[:l] for e, l in zip(edit_tokens, edit_lengths)]
-        edit_z_tilde = [z_[:l] for z_, l in zip(edit_z_tilde, edit_lengths)]
-        z = [z_[:l] for z_, l in zip(z, orig_lengths)]
-        # l - 2 to cut out the prepended label
-        z_edit = [z_[:l-2] for z_, l in zip(z_edit, edit_lengths)]
+        edit_lengths = mask_edit.long().sum(-1).tolist()
+        edit_z_tilde = [z_[:l] for z_, l in zip(z_tilde, edit_lengths)]
+        edit_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in x_edit.tolist()]
+        edit_tokens = [tks[:l] for tks, l in zip(edit_tokens, edit_lengths)]
+        z_edit = [z_[:l] for z_, l in zip(z_edit, edit_lengths)]
 
         output = {
             "texts": orig_tokens,
+            "z": orig_z,
             "labels": labels.tolist() if labels is not None else None,
             "predictions": y_hat,
-            "z": z,
-            "edits_predictions": y_edit_hat,
             "edits": edit_tokens,
             "edits_z": edit_z_tilde,
             "edits_z_pos": z_edit,
+            "edits_predictions": y_edit_hat,
+            "edits_labels": y_prepend.tolist(),
         }
         return output
