@@ -33,13 +33,19 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
         self.sparsemap_orig_budget = h_params.get('sparsemap_budget', 0)
         # self.cf_gold_strategy = h_params.get('cf_gold_strategy', 'fixed')  # fixed or dynamic
 
-    def get_factual_loss(self, y_hat, y, **kwargs):
+    def get_factual_loss(self, y_hat, y, weights=None, **kwargs):
         # main loss for p(y | x, z)
         loss_vec = self.ff_criterion(y_hat, y)  # [B] or [B,C]
-        loss = loss_vec.mean()
+        if weights is not None:
+            if weights.sum().item() == 0:
+                loss = torch.zeros(1, device=self.device)
+            else:
+                loss = (weights.float() * loss_vec).sum() / weights.sum().float()
+        else:
+            loss = loss_vec.mean()
         return loss
 
-    def get_explainer_loss(self, z_ff, z_ff_star, z_cf, z_cf_star, mask_ff, mask_cf):
+    def get_explainer_loss(self, z_ff, z_ff_star, z_cf, z_cf_star, mask_ff, mask_cf, weights=None):
         """
         Compute loss for the explainer flow.
 
@@ -47,6 +53,9 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
         :param z_ff_star: latent selection vector from factual flow (star). torch.FloatTensor of shape [B, T]
         :param z_cf: latent selection vector from counterfactual flow. torch.FloatTensor of shape [B, T]
         :param z_cf_star: latent selection vector from counterfactual flow (star). torch.FloatTensor of shape [B, T]
+        :param mask_ff: mask for factual flow. torch.BoolTensor of shape [B, T]
+        :param mask_cf: mask for counterfactual flow. torch.BoolTensor of shape [B, T]
+        :param weights: weights for loss. torch.FloatTensor of shape [B]
         :return: tuple containing:
             `loss cost (torch.FloatTensor)`: the result of the loss function
         """
@@ -54,7 +63,17 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
         cf_z_loss = torch.norm(z_cf - z_cf_star, p=2, dim=-1) ** 2 / mask_cf.float().sum(dim=-1)
         # ff_z_loss = (torch.relu(z_ff - z_ff_star) * mask_ff.float()).sum(-1) / mask_ff.float().sum(-1)
         # cf_z_loss = (torch.relu(z_cf - z_cf_star) * mask_cf.float()).sum(-1) / mask_cf.float().sum(-1)
-        loss = ff_z_loss.mean() + cf_z_loss.mean()
+        if weights is not None:
+            if weights.sum().item() == 0:
+                ff_loss_mean = torch.zeros(1, device=self.device)
+                cf_loss_mean = torch.zeros(1, device=self.device)
+            else:
+                ff_loss_mean = (weights.float() * ff_z_loss).sum() / weights.sum().float()
+                cf_loss_mean = (weights.float() * cf_z_loss).sum() / weights.sum().float()
+        else:
+            ff_loss_mean = ff_z_loss.mean()
+            cf_loss_mean = cf_z_loss.mean()
+        loss = ff_loss_mean + cf_loss_mean
         return loss
 
     def _get_z_stats(self, z, mask, prefix: str):
@@ -83,18 +102,19 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
 
         # factual inputs
         input_ids = batch["input_ids"]
-        mask = input_ids != self.pad_token_id
+        mask = ~torch.eq(input_ids, self.pad_token_id)
         labels = batch["labels"]
         token_type_ids = batch.get("token_type_ids", None)
         z_gold = batch.get("z", None)
 
         # counterfactual inputs
         cf_input_ids = batch.get("cf_input_ids", None)
-        cf_mask = cf_input_ids != self.pad_token_id if cf_input_ids is not None else None
+        cf_mask = ~torch.eq(cf_input_ids, self.pad_token_id) if cf_input_ids is not None else None
         cf_labels = batch.get("cf_labels", None)
         cf_token_type_ids = batch.get("cf_token_type_ids", None)
         cf_z_pre_gold = batch.get("cf_z_pre", None)
         cf_z_pos_gold = batch.get("cf_z_pos", None)
+        cf_is_valid = batch.get("cf_is_valid", None)
 
         # define sparsemap budget
         if self.sparsemap_budget_strategy == 'adaptive_dynamic':
@@ -118,12 +138,12 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
         cf_z, cf_y_hat = self(cf_input_ids, cf_mask, token_type_ids=cf_token_type_ids, current_epoch=self.current_epoch)
         y_cf_pred = cf_y_hat if not self.is_multilabel else cf_y_hat.view(-1, self.nb_classes)
         y_cf_gold = cf_labels if not self.is_multilabel else cf_labels.view(-1)
-        cf_loss = self.get_factual_loss(y_cf_pred, y_cf_gold)
+        cf_loss = self.get_factual_loss(y_cf_pred, y_cf_gold, weights=cf_is_valid)
         cf_z_stats = self._get_z_stats(cf_z, cf_mask, prefix=prefix)
         self.logger.agg_and_log_metrics(cf_z_stats, step=None)
 
         # compute explainer loss
-        expl_loss = self.get_explainer_loss(z, z_gold, cf_z, cf_z_pre_gold, mask, cf_mask)
+        expl_loss = self.get_explainer_loss(z, z_gold, cf_z, cf_z_pre_gold, mask, cf_mask, weights=cf_is_valid)
 
         # combine losses
         loss = self.ff_lbda * ff_loss + self.cf_lbda * cf_loss + self.expl_lbda * expl_loss
@@ -157,14 +177,14 @@ class ExplSupervisedTransformerSPECTRARationalizer(TransformerSPECTRARationalize
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
         # factual inputs
         input_ids = batch["input_ids"]
-        mask = input_ids != self.pad_token_id
+        mask = ~torch.eq(input_ids, self.pad_token_id)
         labels = batch["labels"]
         token_type_ids = batch.get("token_type_ids", None)
         z_gold = batch.get("z", None)
 
         # counterfactual inputs
         cf_input_ids = batch.get("cf_input_ids", None)
-        cf_mask = cf_input_ids != self.pad_token_id if cf_input_ids is not None else None
+        cf_mask = ~torch.eq(cf_input_ids, self.pad_token_id) if cf_input_ids is not None else None
         cf_labels = batch.get("cf_labels", None)
         cf_token_type_ids = batch.get("cf_token_type_ids", None)
         cf_z_pre_gold = batch.get("cf_z_pre", None)
