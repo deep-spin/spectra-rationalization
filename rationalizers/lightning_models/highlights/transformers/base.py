@@ -276,8 +276,9 @@ class TransformerBaseRationalizer(BaseRationalizer):
         # define the mask for the explanation positions
         e_mask = mask
         if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
-            # focus only on the explanation positions of the first concatenated input
-            e_mask = mask & (token_type_ids == self.explainer_mask_token_type_id)
+            if isinstance(self.explainer_mask_token_type_id, int):
+                # focus only on the explanation positions of the first concatenated input
+                e_mask = mask & (token_type_ids == self.explainer_mask_token_type_id)
 
         # pass through the explainer
         gen_h = self.explainer_mlp(gen_h) if self.explainer_pre_mlp else gen_h
@@ -285,8 +286,9 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # add the other tokens to the explanation
         if token_type_ids is not None and self.explainer_mask_token_type_id is not None:
-            o_mask = mask & (token_type_ids != self.explainer_mask_token_type_id)
-            z = z.masked_fill(o_mask, 1.0)
+            if isinstance(self.explainer_mask_token_type_id, int):
+                o_mask = mask & (token_type_ids != self.explainer_mask_token_type_id)
+                z = z.masked_fill(o_mask, 1.0)
 
         # save vars (useful for some methods, e.g., hardkuma and info bottleneck)
         self.ff_z = z
@@ -627,3 +629,28 @@ class TransformerBaseRationalizer(BaseRationalizer):
             dict_metrics = {**dict_metrics, **dict_cf_metrics}
 
         return dict_metrics
+
+    def predict_step(self, batch: dict, batch_idx: int, dataloader_idx: int = None):
+        input_ids = batch["input_ids"]
+        mask = input_ids != constants.PAD_ID
+        token_type_ids = batch.get("token_type_ids", None)
+        labels = batch.get("labels", None)
+        lengths = mask.long().sum(dim=-1)
+
+        # forward-pass
+        z, y_hat = self(input_ids, mask, token_type_ids=token_type_ids, current_epoch=self.current_epoch)
+
+        # get rationales
+        z = [z_[:l] for z_, l in zip(z, lengths)]
+
+        # tokens
+        orig_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        orig_tokens = [e[:l] for e, l in zip(orig_tokens, lengths)]
+
+        output = {
+            "tokens": orig_tokens,
+            "labels": labels.tolist() if labels is not None else None,
+            "predictions": y_hat,
+            "z": z,
+        }
+        return output
