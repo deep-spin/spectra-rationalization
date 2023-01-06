@@ -230,13 +230,13 @@ def get_new_frequencies_of_gen_ids_from_t5(x_ids, g_ids, pad_id=0, eos_id=1, idx
 
         # recover z from x_ids
         z_x = (x_ids[i] >= idx_a) & (x_ids[i] <= idx_b)          # select sentinel tokens
-        z_x = z_x & (x_ids[i] != pad_id) & (x_ids[i] != eos_id)  # but ignore <pad> and </s>
+        z_x = z_x & (x_ids[i] != pad_id) & ~((x_ids[i] == eos_id) & (x_ids[i].roll(-1) == pad_id))  # no <pad> and </s>
         # for example:
         # z_x = tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])
 
         # recover the complement of z from g_ids
         z_y = ~((g_ids[i] >= idx_a) & (g_ids[i] <= idx_b))       # select non sentinel tokens
-        z_y = z_y & (g_ids[i] != pad_id) & (g_ids[i] != eos_id)  # but ignore <pad> and </s>
+        z_y = z_y & (g_ids[i] != pad_id) & ~((g_ids[i] == eos_id) & (g_ids[i].roll(-1) == pad_id))  # no <pad> and </s>
         # for example:
         # z_y = tensor([0, 1, 1, 0, 1, 1, 1, 0, 0, 0])
 
@@ -339,7 +339,9 @@ def merge_input_and_gen_ids(input_ids_rep, generated_ids_rep, pad_id=0, idx_a=32
     return merged_ids_rep
 
 
-def prepend_label_for_t5(x, y, z, mask, tokenizer, max_length=None, task_name='binary_classification'):
+def prepend_label_for_t5(
+    x, y, z, mask, tokenizer, max_length=None, task_name='binary_classification', nb_classes=2
+):
     """
     Prepend a label to the generated ids for T5 using the following format:
     `<LABEL>: <TOKENS>`
@@ -351,6 +353,7 @@ def prepend_label_for_t5(x, y, z, mask, tokenizer, max_length=None, task_name='b
     :param tokenizer: tokenizer instance
     :param max_length: maximum length of the input
     :param task_name: binary classification or nli
+    :param nb_classes: number of classes
     :return:
         x_cf: tensors of shape [B, T + 2] with the prepended label template
         z_cf: tensors of shape [B, T + 2] with prepended `0s`
@@ -371,22 +374,35 @@ def prepend_label_for_t5(x, y, z, mask, tokenizer, max_length=None, task_name='b
     prefix_ids_neg = prefix_ids_neg[1:] if len(prefix_ids_neg) > 2 else prefix_ids_neg
     prefix_ids_neu = prefix_ids_neu[1:] if len(prefix_ids_neu) > 2 else prefix_ids_neu
 
-    if task_name == 'binary_classification' or task_name == 'qe':
+    if task_name == 'binary_classification':
         prefix_ids = torch.where(
             y.unsqueeze(-1) == 0,
             prefix_ids_neg.unsqueeze(0).expand(batch_size, -1),
             prefix_ids_pos.unsqueeze(0).expand(batch_size, -1)
         )
-    elif task_name == 'nli':
+    elif task_name == 'qe':
         prefix_ids = torch.where(
             y.unsqueeze(-1) == 0,
-            prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),
-            torch.where(
-                y.unsqueeze(-1) == 1,
-                prefix_ids_neu.unsqueeze(0).expand(batch_size, -1),
-                prefix_ids_neg.unsqueeze(0).expand(batch_size, -1)
-            )
+            prefix_ids_neg.unsqueeze(0).expand(batch_size, -1),  # bad has label=0
+            prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),  # ok has label=1
         )
+    elif task_name == 'nli':
+        if nb_classes == 2:
+            prefix_ids = torch.where(
+                y.unsqueeze(-1) == 0,
+                prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),  # entailment has label=0
+                prefix_ids_neg.unsqueeze(0).expand(batch_size, -1)   # contradiction has label=1
+            )
+        else:
+            prefix_ids = torch.where(
+                y.unsqueeze(-1) == 0,
+                prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),  # entailment has label=0
+                torch.where(
+                    y.unsqueeze(-1) == 1,
+                    prefix_ids_neu.unsqueeze(0).expand(batch_size, -1),  # neutral has label=1
+                    prefix_ids_neg.unsqueeze(0).expand(batch_size, -1)   # contradiction has label=2
+                )
+            )
     else:
         raise NotImplementedError
 
@@ -408,6 +424,185 @@ def prepend_label_for_t5(x, y, z, mask, tokenizer, max_length=None, task_name='b
         mask_cf = mask_cf[:, :max_length] if max_length is not None else mask_cf
 
     return x_cf, z_cf, mask_cf
+
+
+def prepend_label_for_t5_variable_length(
+    x, y, z, mask, tokenizer, max_length=None, task_name='binary_classification', nb_classes=2, pad_id=0
+):
+    """
+    Prepend a label to the generated ids for T5 using the following format:
+    `<LABEL>: <TOKENS>`
+
+    :param y: labels, tensor of shape [B]
+    :param x: input ids, tensor of shape [B, T]
+    :param z: latent selections, tensor of shape [B, T]
+    :param mask: input mask, tensor of shape [B, T]
+    :param tokenizer: tokenizer instance
+    :param max_length: maximum length of the input
+    :param task_name: binary classification or nli
+    :param nb_classes: number of classes
+    :param pad_id: id of the padding token
+
+    :return:
+        x_cf: tensors of shape [B, T + 2] with the prepended label template
+        z_cf: tensors of shape [B, T + 2] with prepended `0s`
+        mask_cf: tensors of shape [B, T + 2] with prepended `1s`
+    """
+    batch_size = y.shape[0]
+    max_valid_len = mask.sum(dim=1).max().item()
+
+    if task_name == 'binary_classification':
+        prefix_ids_pos = torch.tensor(
+            tokenizer.encode('label: positive input:', add_special_tokens=False),
+            device=y.device
+        )
+        prefix_ids_neg = torch.tensor(
+            tokenizer.encode('label: negative input:', add_special_tokens=False),
+            device=y.device
+        )
+        prefix_ids = [
+            prefix_ids_neg if y_ == 0 else prefix_ids_pos
+            for y_ in y.tolist()
+        ]
+    elif task_name == 'qe':
+        prefix_ids_ok = torch.tensor(
+            tokenizer.encode('label: ok input:', add_special_tokens=False),
+            device=y.device
+        )
+        prefix_ids_bad = torch.tensor(
+            tokenizer.encode('label: bad input:', add_special_tokens=False),
+            device=y.device
+        )
+        # bad has label=0
+        # ok has label=1
+        prefix_ids = [
+            prefix_ids_bad if y_ == 0 else prefix_ids_ok
+            for y_ in y.tolist()
+        ]
+    elif task_name == 'nli':
+        prefix_ids_ent = torch.tensor(
+            tokenizer.encode('label: entailment input:', add_special_tokens=False),
+            device=y.device
+        )
+        prefix_ids_neu = torch.tensor(
+            tokenizer.encode('label: neutral input:', add_special_tokens=False),
+            device=y.device
+        )
+        prefix_ids_con = torch.tensor(
+            tokenizer.encode('label: contradiction input:', add_special_tokens=False),
+            device=y.device
+        )
+        if nb_classes == 2:
+            # entailment has label=0
+            # contradiction has label=1
+            prefix_ids = [
+                prefix_ids_ent if y_ == 0 else prefix_ids_con
+                for y_ in y.tolist()
+            ]
+        else:
+            # entailment has label=0
+            # neutral has label=1
+            # contradiction has label=2
+            prefix_ids = [
+                prefix_ids_ent if y_ == 0 else
+                prefix_ids_neu if y_ == 1 else
+                prefix_ids_con
+                for y_ in y.tolist()
+            ]
+
+    elif task_name == '20news':
+        if nb_classes == 6:
+            prefix_ids_prompt = [
+                torch.tensor(tokenizer.encode('label: alt input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: comp input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: misc input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: rec input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: sci input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: talk input:', add_special_tokens=False), device=y.device),
+            ]
+        else:
+            prefix_ids_prompt = [
+                torch.tensor(tokenizer.encode('label: alt input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: comp input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: misc input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: rec input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: sci input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: soc input:', add_special_tokens=False), device=y.device),
+                torch.tensor(tokenizer.encode('label: talk input:', add_special_tokens=False), device=y.device),
+            ]
+
+        prefix_ids = [prefix_ids_prompt[y_] for y_ in y.tolist()]
+    else:
+        raise NotImplementedError
+
+    def concat_and_truncate(pre_ids, inp_ids, max_len):
+        v = torch.nn.utils.rnn.pad_sequence(
+            [torch.cat([pre_ids[i], inp_ids[i]]) for i in range(batch_size)],
+            batch_first=True, padding_value=pad_id
+        )
+        max_len_cat = max(map(len, pre_ids)) + max_valid_len
+        v = v[:, :max_len_cat]
+        v = v[:, :max_len] if max_len is not None else v
+        return v
+
+    # prepend prefix to the input (and cap if necessary)
+    x_cf = concat_and_truncate(prefix_ids, x, max_length)
+
+    # and also deal with z and mask
+    z_cf = None
+    if z is not None:
+        prefix_zeros = [torch.zeros_like(prefix_ids[i]).to(z.dtype) for i in range(batch_size)]
+        z_cf = concat_and_truncate(prefix_zeros, z, max_length)
+
+    mask_cf = None
+    if mask is not None:
+        prefix_ones = [torch.ones_like(prefix_ids[i]).to(mask.dtype) for i in range(batch_size)]
+        mask_cf = concat_and_truncate(prefix_ones, mask, max_length)
+
+    return x_cf, z_cf, mask_cf
+
+
+def remove_label_for_t5_variable_length(
+    x_cf, z_cf, mask_cf, max_length=None, task_name='binary_classification', pad_id=0
+):
+    """
+    Remove the label from the generated ids for T5 using the following format:
+
+    label: <LABEL> input: <TOKENS>
+
+    :param x_cf: input ids, tensor of shape [B, T]
+    :param z_cf: latent selections, tensor of shape [B, T]
+    :param mask_cf: input mask, tensor of shape [B, T]
+    :param max_length: maximum length of the input
+    :param task_name: binary classification, nli, or qe
+    :param pad_id: padding id
+
+    :return:
+        x_cf: tensors of shape [B, T'] without the prepended label template
+        z_cf: tensors of shape [B, T'] without prepended `0s`
+        mask_cf: tensors of shape [B, T'] without prepended `1s`
+    """
+    # 10 == ':' for regular tokenizer and 267 for multilingual tokenizer
+    sel = x_cf == 10 if task_name != 'qe' else x_cf == 267
+    sel[:, 1] = False  # ignore the first ':'
+    sel_stop_idxs = sel.long().argmax(-1)
+
+    def remove_and_truncate(v_cf, max_len, max_len_cat_gold=None):
+        v = torch.nn.utils.rnn.pad_sequence(
+            [v_cf[i, s + 1:] for i, s in enumerate(sel_stop_idxs.tolist())],
+            batch_first=True, padding_value=pad_id
+        )
+        max_len_cat_ = (v != pad_id).long().sum(-1).max().item() if max_len_cat_gold is None else max_len_cat_gold
+        v = v[:, :max_len_cat_]
+        v = v[:, :max_len] if max_len is not None else v
+        if max_len_cat_gold is None:
+            return v, max_len_cat_
+        return v
+
+    x, max_len_cat = remove_and_truncate(x_cf, max_length)
+    z = remove_and_truncate(z_cf, max_length, max_len_cat) if z_cf is not None else None
+    mask = remove_and_truncate(mask_cf, max_length, max_len_cat) if mask_cf is not None else None
+    return x, z, mask
 
 
 def prepend_label_for_mice_t5(y_hat, x_cf, z_cf, mask_cf, tokenizer, task='imdb'):
