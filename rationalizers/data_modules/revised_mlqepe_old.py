@@ -27,7 +27,9 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         self.nb_classes = 2
 
         # hyperparams
-        self.lp = d_params.get("lp", "en-de")
+        self.lp = d_params.get("lp", "all-all")
+        self.use_hter_as_label = d_params.get("use_hter_as_label", False)
+        self.transform_scores_to_labels = d_params.get("transform_scores_to_labels", True)
         self.filter_error_min = d_params.get("filter_error_min", None)
         self.filter_error_max = d_params.get("filter_error_max", None)
         self.batch_size = d_params.get("batch_size", 32)
@@ -36,6 +38,14 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         self.max_seq_len = d_params.get("max_seq_len", 99999999)
         self.is_original = d_params.get("is_original", None)
         self.concat_inputs = True
+
+        # fix nb classes
+        if self.transform_scores_to_labels:
+            self.is_multilabel = True
+            self.nb_classes = 2
+        else:
+            self.is_multilabel = False
+            self.nb_classes = 1
 
         # objects
         self.dataset = None
@@ -59,6 +69,8 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             append_sos=False,
             append_eos=False,
         )
+        self.sep_token = self.tokenizer.sep_token or self.tokenizer.eos_token
+        self.bos_token = self.tokenizer.bos_token or self.tokenizer.sep_token
 
     def _collate_fn(self, samples: list, are_samples_batched: bool = False):
         """
@@ -89,9 +101,23 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         # stack labels
         labels = stack_labels(collated_samples["label"])
 
+        das = stack_labels(collated_samples["da"])
+        labels[labels == 0] = (das[labels == 0] > 50).long()
+
+        # stack labels
+        # if self.use_hter_as_label:
+        #     labels = stack_labels(collated_samples["hter"])
+        #     if self.transform_scores_to_labels:
+        #         labels = 1 - ((labels >= 0.30) & (labels <= 1.0)).long()  # bad: 0, ok: 1
+        # else:
+        #     labels = stack_labels(collated_samples["da"])
+        #     if self.transform_scores_to_labels:
+        #         labels = 1 - (labels <= 70).long()  # bad: 0, ok: 1
+
         # keep tokens in raw format
         src_tokens = collated_samples["src"]
         mt_tokens = collated_samples["mt"]
+        tokens = [y.strip() + f' {self.sep_token} {self.bos_token} ' + x.strip() for y, x in zip(mt_tokens, src_tokens)]
 
         # metadata
         batch_id = collated_samples["batch_id"]
@@ -103,6 +129,7 @@ class RevisedMLQEPEDataModule(BaseDataModule):
             "token_type_ids": token_type_ids,
             "lengths": lengths,
             "labels": labels,
+            "tokens": tokens,
             "src_tokens": src_tokens,
             "mt_tokens": mt_tokens,
             "batch_id": batch_id,
@@ -139,11 +166,13 @@ class RevisedMLQEPEDataModule(BaseDataModule):
                     example["src"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
+                    max_length=512,
                 )["input_ids"]
                 mt_ids = self.tokenizer(
                     example["mt"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
+                    max_length=512,
                 )["input_ids"]
             else:
                 src_ids = self.tokenizer.encode(example["src"].strip())
@@ -172,7 +201,7 @@ class RevisedMLQEPEDataModule(BaseDataModule):
         self.dataset.set_format(
             type="torch",
             columns=[
-                "input_ids", "token_type_ids", "label",
+                "input_ids", "token_type_ids", "label", "da", "hter",
                 "batch_id", "is_original"
             ],
             output_all_columns=True
