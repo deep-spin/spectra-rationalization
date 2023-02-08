@@ -18,6 +18,7 @@ from rationalizers.data_modules.movies import MoviesDataModule
 from rationalizers.data_modules.multinli_old import OldMultiNLIDataModule
 from rationalizers.data_modules.revised_imdb import RevisedIMDBDataModule
 from rationalizers.data_modules.revised_imdb_cf import CounterfactualRevisedIMDBDataModule
+from rationalizers.data_modules.revised_imdb_gold_z import GoldRationaleRevisedIMDBDataModule
 from rationalizers.data_modules.revised_imdb_oversampled import OversampledRevisedIMDBDataModule
 from rationalizers.data_modules.revised_imdb_syn import SyntheticRevisedIMDBDataModule
 from rationalizers.data_modules.revised_mlqepe import RevisedMLQEPEDataModule
@@ -60,6 +61,7 @@ available_data_modules = {
     "revised_snli": RevisedSNLIDataModule,
     "revised_mlqepe": RevisedMLQEPEDataModule,
     "contrast_imdb": ContrastIMDBDataModule,
+    "revised_imdb_gold_z": GoldRationaleRevisedIMDBDataModule,
     "revised_imdb_cf": CounterfactualRevisedIMDBDataModule,
     "revised_snli_cf": CounterfactualRevisedSNLIDataModule,
     "revised_mlqepe_cf": CounterfactualRevisedMLQEPEDataModule,
