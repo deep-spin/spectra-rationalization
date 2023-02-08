@@ -63,6 +63,7 @@ Alternatively, keep them undefined, in which case they will be loaded with the p
 | cf_task_name 		 	| `'binary_classification'` | The name of the task at hand, used to create the name of prepend labels: `binary_classification`, `qe`, `nli` |
 | cf_classify_edits 	 	| `True` 					| Whether to pass the edited text as input to the factual rationalizer |
 | cf_generate_kwargs 		| `do_sample: False, num_beams:15, early_stopping: True, length_penalty: 1.0, no_repeat_ngram: 2` | Generation options passed to [huggingface's generate method](https://huggingface.co/docs/transformers/v4.23.1/en/main_classes/text_generation#transformers.generation_utils.GenerationMixin.generate) |
+
 After training, the editor will be saved to the path informed in the `default_root_dir` option.
 
 
@@ -106,43 +107,46 @@ After training, the new rationalizer will be saved to the path informed in the `
 
 ## Interpretability Analysis
 
-1. **Plausibility:** First, extract explanations with:
-    ```bash
-    python3 scripts/get_explanations.py \
-        --ckpt-name "some_name_here" \
-        --ckpt-path "path/to/rationalizer/checkpoint" \
-        --dm_name "movies" \
-        --dm_dataloader "test"
-    ```
+**Plausibility:** First, extract explanations with:
+```bash
+python3 scripts/get_explanations.py \
+    --ckpt-name "some_name_here" \
+    --ckpt-path "path/to/rationalizer/checkpoint" \
+    --dm_name "movies" \
+    --dm_dataloader "test"
+```
 
-    which yields a file with the following format: `data/rationales/{dm_name}_{dm_dataloader}_{ckpt_name}.tsv`.
-    Then follow the instructions in the notebook `plausibility_imdb.ipynb`.
+which yields a file with the following format: `data/rationales/{dm_name}_{dm_dataloader}_{ckpt_name}.tsv`.
 
-
-2. **Factual Simulation**: First, train a student model:
-    ```bash
-    python3 scripts/train_students_sim.py \
-        --student-type bow \
-        --train-data path/to/train_edits.tsv \
-        --test-data path/to/test_edits.tsv \
-        --batch-size 16 \
-        --seed 0
-    ```
-    Then follow the instructions in the notebook `simulability_imdb.ipynb`.
+Then follow the instructions in the notebook `plausibility_imdb.ipynb`.
 
 
-3. **Counterfactual Simulation**: First, extract explanations with:
-    ```bash
-    python3 scripts/get_explanations.py \
-        --ckpt-name "some_name_here" \
-        --ckpt-path "path/to/rationalizer/checkpoint" \
-        --ckpt-editor-path "path/to/editor/checkpoint" \
-        --dm_name "imdb" \
-        --dm_dataloader "test" \
-        --sample_mode "beam" \
-        --num_beams 15
-    ```
+**Factual Simulation**: First, train a student model:
+```bash
+python3 scripts/train_students_sim.py \
+    --student-type bow \
+    --train-data path/to/train_edits.tsv \
+    --test-data path/to/test_edits.tsv \
+    --batch-size 16 \
+    --seed 0
+```
 
-    which yields a file with the following format: `data/rationales/{dm_name}_{dm_dataloader}_{ckpt_name}_{sample_mode}_{num_beams}_with_edits.tsv`
-    Then follow the instructions in the notebook `counterfactuality_imdb.ipynb`.
+Then follow the instructions in the notebook `simulability_imdb.ipynb`.
+
+
+**Counterfactual Simulation**: First, extract explanations with:
+```bash
+python3 scripts/get_explanations.py \
+    --ckpt-name "some_name_here" \
+    --ckpt-path "path/to/rationalizer/checkpoint" \
+    --ckpt-editor-path "path/to/editor/checkpoint" \
+    --dm_name "imdb" \
+    --dm_dataloader "test" \
+    --sample_mode "beam" \
+    --num_beams 15
+```
+
+which yields a file with the following format: `data/rationales/{dm_name}_{dm_dataloader}_{ckpt_name}_{sample_mode}_{num_beams}_with_edits.tsv`.
+
+Then follow the instructions in the notebook `counterfactuality_imdb.ipynb`.
 
