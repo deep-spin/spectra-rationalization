@@ -107,7 +107,7 @@ After training, the new rationalizer will be saved to the path informed in the `
 
 ## Interpretability Analysis
 
-**Plausibility:** First, extract explanations with:
+- **Plausibility:** First, extract explanations with:
 ```bash
 python3 scripts/get_explanations.py \
     --ckpt-name "some_name_here" \
@@ -121,7 +121,7 @@ which yields a file with the following format: `data/rationales/{dm_name}_{dm_da
 Then follow the instructions in the notebook `plausibility_imdb.ipynb`.
 
 
-**Factual Simulation**: First, train a student model:
+- **Factual Simulation**: First, train a student model:
 ```bash
 python3 scripts/train_students_sim.py \
     --student-type bow \
@@ -134,7 +134,7 @@ python3 scripts/train_students_sim.py \
 Then follow the instructions in the notebook `simulability_imdb.ipynb`.
 
 
-**Counterfactual Simulation**: First, extract explanations with:
+- **Counterfactual Simulation**: First, extract explanations with:
 ```bash
 python3 scripts/get_explanations.py \
     --ckpt-name "some_name_here" \
