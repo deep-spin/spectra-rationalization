@@ -138,8 +138,8 @@ Then follow the instructions in the notebook `simulability_imdb.ipynb`.
 ```bash
 python3 scripts/get_edits.py \
     --ckpt-name "some_name_here" \
-    --ckpt-path "path/to/rationalizer/checkpoint" \
-    --ckpt-editor-path "path/to/editor/checkpoint" \
+    --ckpt-path "path/to/editor/checkpoint" \
+    --ckpt-rat-path "path/to/rationalizer/checkpoint" \
     --dm_name "imdb" \
     --dm_dataloader "test" \
     --num_beams 15
