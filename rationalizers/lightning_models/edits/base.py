@@ -138,10 +138,10 @@ class BaseEditor(TransformerBaseRationalizer):
         :return: (z, y_hat), (x_tilde, z_tilde, mask_tilde, y_tilde_hat)
         """
 
-        if self.cf_z_type == "pred" or self.cf_prepend_label_type == "pred":
-            with torch.no_grad():
-                # factual flow
-                z_hat, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
+        # if self.cf_z_type == "pred" or self.cf_prepend_label_type == "pred":
+        with torch.no_grad():
+            # factual flow
+            z_hat, y_hat = self.get_factual_flow(x, mask=mask, token_type_ids=token_type_ids)
 
         # select which y and z to use
         y_prepend = y.clone() if y is not None and self.cf_prepend_label_type == "gold" else y_hat.argmax(-1)
@@ -169,7 +169,7 @@ class BaseEditor(TransformerBaseRationalizer):
                 # tmp = torch.rand(y_prepend.shape[0], self.nb_classes, device=y_prepend.device)
                 # ar = torch.arange(y_prepend.shape[0], device=y_prepend.device)
                 # tmp[ar, y_prepend] = -1.0
-                # y_prepend = tmp.argsort(-1)[:, 1]
+                # y_prepend = tmp.argmax(-1)
             elif self.cf_task_name == '20news':
                 y_prepend = y_contrast
             else:
@@ -381,9 +381,12 @@ class BaseEditor(TransformerBaseRationalizer):
             # lm_logits = y_hat.log_softmax(dim=-1).view(-1, y_hat.size(-1))
             # lm_labels = y.masked_fill(y == self.pad_token_id, -100).view(-1,)
             # main_loss = torch.nn.functional.nll_loss(lm_logits, lm_labels, ignore_index=-100)
-            lm_logits = y_hat.view(-1, y_hat.size(-1))
-            lm_labels = y.masked_fill(y == self.pad_token_id, -100).view(-1, )
-            main_loss = torch.nn.functional.cross_entropy(lm_logits, lm_labels, ignore_index=-100)
+            if y_hat is None:
+                main_loss = torch.zeros(1, device=self.device)
+            else:
+                lm_logits = y_hat.view(-1, y_hat.size(-1))
+                lm_labels = y.masked_fill(y == self.pad_token_id, -100).view(-1, )
+                main_loss = torch.nn.functional.cross_entropy(lm_logits, lm_labels, ignore_index=-100)
 
         stats = {}
         num_0, num_c, num_1, total = get_z_stats(z, mask)
@@ -438,9 +441,8 @@ class BaseEditor(TransformerBaseRationalizer):
         return {"loss": loss, "ps": loss_stats["train_ps"]}
 
     def _shared_eval_step(self, batch: dict, batch_idx: int, prefix: str):
-        # turn on generation mode for test
-        if prefix == 'test':
-            self.generation_mode = True
+        # if "val" in prefix and 'nli' in self.cf_task_name:
+        #     self.generation_mode = True
 
         input_ids = batch["input_ids"]
         token_type_ids = batch.get("token_type_ids", None)
@@ -525,6 +527,9 @@ class BaseEditor(TransformerBaseRationalizer):
         ct_edit_z_tilde = ct_z_tilde
         ct_edit_tokens = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in ct_x_edit.tolist()]
         ct_edit_tokens = [tks[:l] for tks, l in zip(ct_edit_tokens, ct_edit_lengths)]
+
+        # if "val" in prefix and 'nli' in self.cf_task_name and self.generation_mode:
+        #     self.generation_mode = False
 
         # output to be stacked across iterations
         output = {
