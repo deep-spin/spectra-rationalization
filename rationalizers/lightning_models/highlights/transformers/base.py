@@ -63,6 +63,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         self.ff_selection_mask = h_params.get("selection_mask", True)
         self.ff_selection_faithfulness = h_params.get("selection_faithfulness", True)
         self.ff_lbda = h_params.get('ff_lbda', 1.0)
+        self.cf_lbda = h_params.get('cf_lbda', 1.0)
 
         # explainer:
         self.explainer_fn = h_params.get("explainer_fn", "attention")
@@ -368,7 +369,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         return z, y_hat
 
-    def get_factual_loss(self, y_hat, y, z, mask, prefix):
+    def get_factual_loss(self, y_hat, y, z, mask, prefix, loss_weights=None):
         """
         Compute loss for the factual flow.
 
@@ -377,6 +378,7 @@ class TransformerBaseRationalizer(BaseRationalizer):
         :param z: latent selection vector. torch.FloatTensor of shape [B, T]
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :param prefix: prefix for loss statistics (train, val, test)
+        :param loss_weights: loss weights. torch.FloatTensor of shape [B]
         :return: tuple containing:
             `loss cost (torch.FloatTensor)`: the result of the loss function
             `loss stats (dict): dict with loss statistics
@@ -386,9 +388,15 @@ class TransformerBaseRationalizer(BaseRationalizer):
 
         # masked average
         if loss_vec.dim() == 2:
-            loss = (loss_vec * mask.float()).sum(-1) / mask.sum(-1).float()  # [1]
+            if loss_weights is not None:
+                loss = (loss_vec * loss_weights * mask.float()).sum(-1) / mask.sum(-1).float()  # [1]
+            else:
+                loss = (loss_vec * mask.float()).sum(-1) / mask.sum(-1).float()  # [1]
         else:
-            loss = loss_vec.mean()
+            if loss_weights is not None:
+                loss = (loss_vec * loss_weights).mean()
+            else:
+                loss = loss_vec.mean()
 
         # main loss for p(y | x, z)
         stats["mse" if not self.is_multilabel else "criterion"] = loss.item()
@@ -419,14 +427,21 @@ class TransformerBaseRationalizer(BaseRationalizer):
         mask = input_ids != constants.PAD_ID
         labels = batch["labels"]
         token_type_ids = batch.get("token_type_ids", None)
+        is_original = batch.get("is_original", None)
         prefix = "train"
 
+        # forward pass
         z, y_hat = self(input_ids, mask, token_type_ids=token_type_ids, current_epoch=self.current_epoch)
+
+        # define loss weights
+        loss_weights = None
+        if is_original is not None and self.cf_lbda < 1:
+            loss_weights = torch.where(is_original.long() == 1, 1.0, float(self.cf_lbda))
 
         # compute factual loss
         y_hat = y_hat if not self.is_multilabel else y_hat.view(-1, self.nb_classes)
         y = labels if not self.is_multilabel else labels.view(-1)
-        loss, loss_stats = self.get_factual_loss(y_hat, y, z, mask, prefix=prefix)
+        loss, loss_stats = self.get_factual_loss(y_hat, y, z, mask, prefix=prefix, loss_weights=loss_weights)
 
         # logger=False because they are going to be logged via loss_stats
         self.log("train_ff_ps", loss_stats["train_ps"], prog_bar=True, logger=False, on_step=True, on_epoch=False)
