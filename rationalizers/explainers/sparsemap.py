@@ -46,16 +46,20 @@ class SparseMAPExplainer(BaseExplainer):
                 ),
                 dim=-1,
             )
-            x[lengths[k]:, 0] = -1e12
+            # x[lengths[k]:, 0] = -1e12
+            x[:, 0].masked_fill_(~mask[k], -1e12)
 
             # Set transition scores for valid positions
             transition_scores = torch.tensor(t[k], device=scores.device)
             transition = torch.zeros(
                 (length + 1, num_states, num_states), device=scores.device
             )
-            transition[: lengths[k] + 1, 0, 0] = (
-                transition_scores[: lengths[k] + 1] / self.temperature
-            )
+            # transition[: lengths[k] + 1, 0, 0] = (
+            #     transition_scores[: lengths[k] + 1] / self.temperature
+            # )
+            mask_plus_one = torch.tensor(mask[k].tolist() + [False], device=mask.device)
+            mask_plus_one = mask_plus_one | mask_plus_one.roll(1, dims=0)
+            transition[mask_plus_one, 0, 0] = transition_scores[mask_plus_one] / self.temperature
 
             # H:SeqBudget consists of a single factor so, in this particular case, the LP-SparseMAP solution is
             # indeed the SparseMAP solution and it can be found within a single iteration.
