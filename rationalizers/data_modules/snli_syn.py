@@ -10,6 +10,7 @@ from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.snli import SNLIDataModule
+from rationalizers.data_modules.utils import token_type_ids_from_input_ids, fix_saved_inputs_for_t5
 
 
 class SyntheticSNLIDataModule(SNLIDataModule):
@@ -60,12 +61,15 @@ class SyntheticSNLIDataModule(SNLIDataModule):
         else:
             tokens = [p.strip() + ' ' + self.sep_token + ' ' + h.strip() for p, h in zip(hyp_tokens, prem_tokens)]
 
+        is_original = torch.tensor(collated_samples["is_original"])
+
         batch = {
             "input_ids": input_ids,
             "token_type_ids": token_type_ids,
             "lengths": lengths,
             "labels": labels,
             "tokens": tokens,
+            "is_original": is_original
         }
 
         return batch
@@ -79,6 +83,9 @@ class SyntheticSNLIDataModule(SNLIDataModule):
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
+
+        # filter out invalid samples
+        self.dataset = self.dataset.filter(lambda ex: ex["label"] != -1)
 
         # cap dataset size - useful for quick testing
         if self.max_dataset_size is not None:
@@ -98,41 +105,36 @@ class SyntheticSNLIDataModule(SNLIDataModule):
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
-        def _encode(example: dict):
+        def _encode(ex: dict):
             if isinstance(self.tokenizer, PreTrainedTokenizerBase):
                 if not self.swap_pair:
                     input_enc = self.tokenizer(
-                        example["premise"].strip(),
-                        example["hypothesis"].strip(),
+                        ex["premise"].strip(),
+                        ex["hypothesis"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
                 else:
                     input_enc = self.tokenizer(
-                        example["hypothesis"].strip(),
-                        example["premise"].strip(),
+                        ex["hypothesis"].strip(),
+                        ex["premise"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
-                example["input_ids"] = input_enc["input_ids"]
-                if 'token_type_ids' in input_enc:
-                    example["token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
-                else:
-                    example["token_type_ids"] = 1 - torch.cumprod(
-                        torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+                ex["input_ids"] = input_enc["input_ids"]
+                ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             else:
                 if not self.swap_pair:
-                    example["input_ids"] = self.tokenizer.encode(
-                        example["premise"].strip() + ' ' + self.sep_token + ' ' + example["hypothesis"].strip()
+                    ex["input_ids"] = self.tokenizer.encode(
+                        ex["premise"].strip() + ' ' + self.sep_token + ' ' + ex["hypothesis"].strip()
                     )
                 else:
-                    example["input_ids"] = self.tokenizer.encode(
-                        example["hypothesis"].strip() + ' ' + self.sep_token + ' ' + example["premise"].strip()
+                    ex["input_ids"] = self.tokenizer.encode(
+                        ex["hypothesis"].strip() + ' ' + self.sep_token + ' ' + ex["premise"].strip()
                     )
-                example["token_type_ids"] = 1 - torch.cumprod(
-                    torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
-
-            return example
+                ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
+            ex['is_original'] = 1
+            return ex
 
         self.dataset = self.dataset.map(_encode)
 
@@ -159,71 +161,50 @@ class SyntheticSNLIDataModule(SNLIDataModule):
 
         def fix_data(ex):
             ex['input_ids'] = self.tokenizer.convert_tokens_to_ids(ex['edits_texts'].split())
+            ex['input_ids'] = fix_saved_inputs_for_t5(ex['input_ids'], sep_id=self.sep_token_id)
             ex['premise'] = ex['edits_texts'].split('</s>')[0]
             ex['hypothesis'] = ex['edits_texts'].split('</s>')[1]
-            ex["token_type_ids"] = 1 - torch.cumprod(torch.tensor(ex["input_ids"]) != self.sep_token_id, dim=0)
+            ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
+            ex['is_original'] = 0
             return ex
         ds_syn = ds_syn.map(fix_data)
 
         if self.filter_invalid_edits:
-            # filter out examples with wrong predictions (i.e. edits that do not change the prediction)
+            # filter out exs with wrong predictions (i.e. edits that do not change the prediction)
             ds_syn = ds_syn.filter(lambda ex: ex["edits_labels"] == ex["edits_predictions"])
 
         # match column names and features
         ds_syn = ds_syn.rename_column("edits_labels", "label")
 
-        # cap synthetic dataset size
+        # limit synthetic dataset size
         if self.pct_synthetic_dataset_size < 1:
-            # select a small pct
-            # ds_syn_split = ds_syn["train"].train_test_split(
-            #     train_size=self.pct_synthetic_dataset_size,
-            #     shuffle=True,
-            #     stratify_by_column="orig_labels",
-            # )
-
-            # create a stratified subset of the synthetic dataset
-            def get_dist(y):
-                vals, counts = np.unique(y, return_counts=True)
-                return dict(zip(vals, counts / counts.sum()))
-
-            def get_size_per_label(y):
-                _, counts = np.unique(y, return_counts=True)
-                return counts
-
-            dist = get_dist(self.dataset["train"]["label"])
-            min_size = get_size_per_label(ds_syn["train"]["label"]).min()
-            # train_size = len(self.dataset['train'])
-            # pct = train_size * self.pct_synthetic_dataset_size / len(ds_syn["train"])
-            idxs = []
-            for lab, freq in dist.items():
-                idxs_ = [i for i, y in enumerate(ds_syn["train"]["label"]) if y == lab]
-                idxs_ = np.random.permutation(idxs_)[:min_size]
-                idxs_ = idxs_[:int(self.pct_synthetic_dataset_size * len(idxs_))]
-                idxs.extend(idxs_)
-            ds_syn["train"] = ds_syn["train"].select(idxs)
-            print(get_dist(self.dataset["train"]["label"]))
-            print(get_dist(ds_syn["train"]["label"]))
+            train_size = len(self.dataset["train"])
+            syn_size = int(train_size * self.pct_synthetic_dataset_size)
+            df_syn_train = ds_syn["train"].to_pandas()
+            df_ent = df_syn_train[df_syn_train['label'] == 0].sample(frac=1).iloc[:syn_size // 3]
+            df_neu = df_syn_train[df_syn_train['label'] == 1].sample(frac=1).iloc[:syn_size // 3]
+            df_con = df_syn_train[df_syn_train['label'] == 2].sample(frac=1).iloc[:syn_size // 3]
+            sel_idxs = df_ent.index.tolist() + df_neu.index.tolist() + df_con.index.tolist()
+            ds_syn["train"] = ds_syn["train"].select(sel_idxs)
+            print(ds_syn)
             print(np.unique(self.dataset["train"]["label"], return_counts=True))
             print(np.unique(ds_syn["train"]["label"], return_counts=True))
-            print(f"Original dataset size: {len(self.dataset['train'])}")
-            print(f"Synthetic dataset size: {len(ds_syn['train'])}")
-            print(f"Synthetic dataset size (pct): {len(ds_syn['train']) / len(self.dataset['train'])}")
 
         # remove columns that are not needed
         ds_syn = ds_syn.remove_columns(
             ["orig_labels", "orig_predictions", "orig_z", "edits_predictions", "edits_z_pre", "edits_z_pos"]
         )
 
-        # add synthetic edits as new examples to the original dataset
+        # add synthetic edits as new exs to the original dataset
         self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=0)
+        print(self.dataset)
 
         # filter length
-        self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+        self.dataset = self.dataset.filter(lambda ex: len(ex["input_ids"]) <= self.max_seq_len)
 
         # convert `columns` to pytorch tensors and keep un-formatted columns
         self.dataset.set_format(
             type="torch",
-            columns=["input_ids", "token_type_ids", "label",],
+            columns=["input_ids", "token_type_ids", "label"],
             output_all_columns=True,
         )
-

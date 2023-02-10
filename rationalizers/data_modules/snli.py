@@ -10,6 +10,7 @@ from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.base import BaseDataModule
+from rationalizers.data_modules.utils import token_type_ids_from_input_ids
 
 
 class SNLIDataModule(BaseDataModule):
@@ -34,6 +35,7 @@ class SNLIDataModule(BaseDataModule):
         self.concat_inputs = d_params.get("concat_inputs", True)
         self.swap_pair = d_params.get("swap_pair", False)
         self.filter_neutrals = d_params.get("filter_neutrals", False)
+        self.use_revised_snli_val = d_params.get("use_revised_snli_val", False)
         if self.filter_neutrals:
             self.nb_classes = 2
 
@@ -105,7 +107,7 @@ class SNLIDataModule(BaseDataModule):
 
             batch = {
                 "input_ids": input_ids,
-                #"token_type_ids": token_type_ids,
+                "token_type_ids": token_type_ids,
                 "lengths": lengths,
                 "labels": labels,
                 "tokens": tokens,
@@ -150,8 +152,21 @@ class SNLIDataModule(BaseDataModule):
                 download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
             )
 
+        if self.use_revised_snli_val:
+            print('Using revised SNLI val set')
+            ds_rev = hf_datasets.load_dataset(
+                path="./rationalizers/custom_hf_datasets/revised_snli.py",
+                download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
+                side='both',
+            )
+            ds_rev = ds_rev.filter(lambda x: x['is_original'])
+            ds_rev = ds_rev.rename_column("prem", "premise")
+            ds_rev = ds_rev.rename_column("hyp", "hypothesis")
+            ds_rev = ds_rev.remove_columns(["batch_id", "is_original"])
+            self.dataset['validation'] = ds_rev['test']
+
         # filter out invalid samples
-        self.dataset = self.dataset.filter(lambda example: example["label"] != -1)
+        self.dataset = self.dataset.filter(lambda ex: ex["label"] != -1)
 
         # cap dataset size - useful for quick testing
         if self.max_dataset_size is not None:
@@ -171,71 +186,66 @@ class SNLIDataModule(BaseDataModule):
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
-        def _encode(example: dict):
+        def _encode(ex: dict):
             if self.concat_inputs:
                 if isinstance(self.tokenizer, PreTrainedTokenizerBase):
                     if not self.swap_pair:
                         input_enc = self.tokenizer(
-                            example["premise"].strip(),
-                            example["hypothesis"].strip(),
+                            ex["premise"].strip(),
+                            ex["hypothesis"].strip(),
                             padding=False,  # do not pad, padding will be done later
                             truncation=True,  # truncate to max length accepted by the model
                         )
                     else:
                         input_enc = self.tokenizer(
-                            example["hypothesis"].strip(),
-                            example["premise"].strip(),
+                            ex["hypothesis"].strip(),
+                            ex["premise"].strip(),
                             padding=False,  # do not pad, padding will be done later
                             truncation=True,  # truncate to max length accepted by the model
                         )
-                    example["input_ids"] = input_enc["input_ids"]
-                    if 'token_type_ids' in input_enc:
-                        example["token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
-                    else:
-                        example["token_type_ids"] = 1 - torch.cumprod(
-                            torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+                    ex["input_ids"] = input_enc["input_ids"]
+                    ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
                 else:
                     if not self.swap_pair:
-                        example["input_ids"] = self.tokenizer.encode(
-                            example["premise"].strip() + ' ' + self.sep_token + ' ' + example["hypothesis"].strip()
+                        ex["input_ids"] = self.tokenizer.encode(
+                            ex["premise"].strip() + ' ' + self.sep_token + ' ' + ex["hypothesis"].strip()
                         )
                     else:
-                        example["input_ids"] = self.tokenizer.encode(
-                            example["hypothesis"].strip() + ' ' + self.sep_token + ' ' + example["premise"].strip()
+                        ex["input_ids"] = self.tokenizer.encode(
+                            ex["hypothesis"].strip() + ' ' + self.sep_token + ' ' + ex["premise"].strip()
                         )
-                    example["token_type_ids"] = 1 - torch.cumprod(
-                        torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+                    ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             else:
                 if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                    example["prem_ids"] = self.tokenizer(
-                        example["premise"].strip(),
+                    ex["prem_ids"] = self.tokenizer(
+                        ex["premise"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )["input_ids"]
-                    example["hyp_ids"] = self.tokenizer(
-                        example["hypothesis"].strip(),
+                    ex["hyp_ids"] = self.tokenizer(
+                        ex["hypothesis"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )["input_ids"]
                 else:
-                    example["prem_ids"] = self.tokenizer.encode(example["premise"].strip())
-                    example["hyp_ids"] = self.tokenizer.encode(example["hypothesis"].strip())
-            return example
+                    ex["prem_ids"] = self.tokenizer.encode(ex["premise"].strip())
+                    ex["hyp_ids"] = self.tokenizer.encode(ex["hypothesis"].strip())
+            return ex
 
         self.dataset = self.dataset.map(_encode)
 
         if self.concat_inputs:
-            self.dataset = self.dataset.filter(lambda example: len(example["input_ids"]) <= self.max_seq_len)
+            self.dataset = self.dataset.filter(lambda ex: len(ex["input_ids"]) <= self.max_seq_len)
         else:
-            self.dataset = self.dataset.filter(lambda example: len(example["prem_ids"]) <= self.max_seq_len)
-            self.dataset = self.dataset.filter(lambda example: len(example["hyp_ids"]) <= self.max_seq_len)
+            self.dataset = self.dataset.filter(lambda ex: len(ex["prem_ids"]) <= self.max_seq_len)
+            self.dataset = self.dataset.filter(lambda ex: len(ex["hyp_ids"]) <= self.max_seq_len)
 
         if self.filter_neutrals:
             def fix_labels(ex):
                 ex["label"] = 1 if ex["label"] == 2 else 0
                 return ex
 
-            self.dataset = self.dataset.filter(lambda example: example["label"] != 1)
+            self.dataset = self.dataset.filter(lambda ex: ex["label"] != 1)
             self.dataset = self.dataset.map(fix_labels)
 
         def get_dist(y):

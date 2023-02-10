@@ -167,3 +167,39 @@ def get_lp_name(l):
         'zh-Latn': 'Chinese (Latin)', 'zu': 'Zulu',
     }
     return langs.get(l, l)
+
+
+def token_type_ids_from_input_ids(input_ids, sep_id=1):
+    """
+    Creates a tensor that encodes the token type ids given the input ids.
+
+    Args:
+        input_ids (torch.Tensor or list): the input ids.
+        sep_id (int): the id of the separator token.
+
+    Returns:
+        torch.LongTensor: the token type ids.
+    """
+    m = torch.tensor(input_ids).roll(1, dims=0) == sep_id
+    m[0] = False
+    return torch.cumsum(m, dim=0).clamp(max=1)
+
+
+def fix_saved_inputs_for_t5(input_ids, sep_id=1):
+    """
+    Fixes the saved inputs for T5, which may contain extras </s> tokens.
+
+    Args:
+        input_ids (torch.Tensor or list): the input ids.
+        sep_id (int): the id of the separator token.
+
+    Returns:
+        torch.LongTensor: the fixed input ids.
+    """
+    x = torch.tensor(input_ids)
+    is_eos = x == sep_id
+    # is_fused = x == x.roll(-1, dims=-1)
+    # valid_pos = ~(is_eos & is_fused)
+    c = torch.cumsum(is_eos, dim=0)
+    valid_pos = c <= 2
+    return x[valid_pos]

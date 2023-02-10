@@ -8,6 +8,7 @@ from transformers import PreTrainedTokenizerBase
 
 from rationalizers import constants
 from rationalizers.data_modules.snli import SNLIDataModule
+from rationalizers.data_modules.utils import token_type_ids_from_input_ids, fix_saved_inputs_for_t5
 
 
 class SyntheticExplainSNLIDataModule(SNLIDataModule):
@@ -15,6 +16,7 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         super().__init__(d_params, tokenizer)
+        self.path = "esnli"
         self.synthetic_edits_path = d_params["synthetic_edits_path"]
         self.filter_invalid_edits = d_params.get("filter_invalid_edits", False)
         self.pct_synthetic_dataset_size = d_params.get("pct_synthetic_dataset_size", 1.0)
@@ -101,6 +103,9 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
         )
 
+        # filter out invalid samples
+        self.dataset = self.dataset.filter(lambda ex: ex["label"] != -1)
+
         # cap dataset size - useful for quick testing
         if self.max_dataset_size is not None:
             self.dataset["train"] = self.dataset["train"].select(range(self.max_dataset_size))
@@ -119,41 +124,36 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # map strings to ids
-        def _encode(example: dict):
+        def _encode(ex: dict):
             if isinstance(self.tokenizer, PreTrainedTokenizerBase):
                 if not self.swap_pair:
                     input_enc = self.tokenizer(
-                        example["premise"].strip(),
-                        example["hypothesis"].strip(),
+                        ex["premise"].strip(),
+                        ex["hypothesis"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
                 else:
                     input_enc = self.tokenizer(
-                        example["hypothesis"].strip(),
-                        example["premise"].strip(),
+                        ex["hypothesis"].strip(),
+                        ex["premise"].strip(),
                         padding=False,  # do not pad, padding will be done later
                         truncation=True,  # truncate to max length accepted by the model
                     )
-                example["input_ids"] = input_enc["input_ids"]
-                if 'token_type_ids' in input_enc:
-                    example["token_type_ids"] = torch.tensor(input_enc["token_type_ids"])
-                else:
-                    example["token_type_ids"] = 1 - torch.cumprod(
-                        torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+                ex["input_ids"] = input_enc["input_ids"]
+                ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             else:
                 if not self.swap_pair:
-                    example["input_ids"] = self.tokenizer.encode(
-                        example["premise"].strip() + ' ' + self.sep_token + ' ' + example["hypothesis"].strip()
+                    ex["input_ids"] = self.tokenizer.encode(
+                        ex["premise"].strip() + ' ' + self.sep_token + ' ' + ex["hypothesis"].strip()
                     )
                 else:
-                    example["input_ids"] = self.tokenizer.encode(
-                        example["hypothesis"].strip() + ' ' + self.sep_token + ' ' + example["premise"].strip()
+                    ex["input_ids"] = self.tokenizer.encode(
+                        ex["hypothesis"].strip() + ' ' + self.sep_token + ' ' + ex["premise"].strip()
                     )
-                example["token_type_ids"] = 1 - torch.cumprod(
-                    torch.tensor(example["input_ids"]) != self.sep_token_id, dim=0)
+                ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
 
-            return example
+            return ex
 
         self.dataset = self.dataset.map(_encode)
 
@@ -180,12 +180,13 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
 
         def fix_data(ex):
             ex['input_ids'] = self.tokenizer.convert_tokens_to_ids(ex['edits_texts'].split())
-            ex["token_type_ids"] = 1 - torch.cumprod(torch.tensor(ex["input_ids"]) != self.sep_token_id, dim=0)
+            ex['input_ids'] = fix_saved_inputs_for_t5(ex['input_ids'], sep_id=self.sep_token_id)
+            ex['orig_z'] = eval(ex['orig_z'])
+            ex['edits_z_pre'] = eval(ex['edits_z_pre'])[:len(ex['input_ids'])]
+            ex['edits_z_pos'] = eval(ex['edits_z_pos'])[:len(ex['input_ids'])]
+            ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             ex['premise'] = ex['edits_texts'].split('</s>')[0]
             ex['hypothesis'] = ex['edits_texts'].split('</s>')[1]
-            ex['orig_z'] = eval(ex['orig_z'])
-            ex['edits_z_pre'] = eval(ex['edits_z_pre'])[2:]
-            ex['edits_z_pos'] = eval(ex['edits_z_pos'])
             return ex
         ds_syn = ds_syn.map(fix_data)
 
@@ -248,10 +249,12 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
 
             # ds_syn["train"] = ds_syn["train"].select(idxs)
 
-        # add synthetic edits as new examples to the original dataset
+        # add synthetic edits as new exs to the original dataset
         self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=1)
+        # ds_syn["train"] = ds_syn["train"].filter(lambda ex: ex['cf_is_valid'] == 1)
+        # self.dataset["train"] = ds_syn["train"]
 
-        # filter out examples with wrong predictions (i.e. edits that do not change the prediction)
+        # filter out exs with wrong predictions (i.e. edits that do not change the prediction)
         def filter_invalid(ex):
             ex['cf_is_valid'] = 1 if 'cf_is_valid' not in ex else ex['cf_is_valid']
             if self.filter_invalid_edits and ex['cf_label'] != ex['cf_pred']:
@@ -259,8 +262,9 @@ class SyntheticExplainSNLIDataModule(SNLIDataModule):
             return ex
 
         self.dataset["train"] = self.dataset["train"].map(filter_invalid)
+        self.dataset["train"] = self.dataset["train"].filter(lambda ex: ex['cf_is_valid'] == 1)
         # self.dataset["train"] = self.dataset["train"].filter(lambda ex: ex["cf_label"] == ex["cf_pred"])
-
+        # 37722
         # filter length
         self.dataset = self.dataset.filter(lambda ex: len(ex["input_ids"]) <= self.max_seq_len)
 
