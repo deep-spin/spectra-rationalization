@@ -17,6 +17,7 @@ Official implementation of the **EMNLP 2021** paper **SPECTRA: Sparse Structured
 
 All material is made available under the MIT license. You can **use, redistribute, and adapt** the material for **non-commercial purposes**, as long as you give appropriate credit by **citing our paper** and **indicating any changes** that you've made.
 
+
 ## Python requirements and installation
 
 This code was tested on `Python 3.8.2`. To install, follow these steps:
@@ -24,6 +25,7 @@ This code was tested on `Python 3.8.2`. To install, follow these steps:
 1. In a virtual environment, first install Cython: `pip install cython`
 2. Clone the [Eigen](https://gitlab.com/libeigen/eigen.git) repository to the main folder: `git clone git@gitlab.com:libeigen/eigen.git`
 3. Clone the [LP-SparseMAP](https://github.com/nunonmg/lp-sparsemap) fork repository to main folder, and follow the installation instructions found there
+   - Follow this fix in case of compilation errors: https://github.com/deep-spin/lp-sparsemap/issues/9
 4. Install PyTorch: `pip install torch` (we used version 1.6.0)
 5. Install the requirements: `pip install -r requirements.txt`
 6. Install the `spectra-rationalization` package: `pip install .` (or in editable mode if you want to make changes: `pip install -e .`)
@@ -40,7 +42,7 @@ We have used [Hugging Face Datasets](https://github.com/huggingface/datasets) to
 
 To train a model you need to define a `.yaml` config. We have made available several of them in `/configs/`.<sup>[1](#myfootnote1)</sup> This config will include all relevant hyperparameters for that run. Below, we will show some examples:
 
-Train **SPECTRA** on *AgNews*: 
+Train **SPECTRA** on *AgNews*:
 ```bash
 python3 -W ignore rationalizers train --config configs/agnews/agnews_spectra
 ```
@@ -55,7 +57,7 @@ python3 -W ignore rationalizers train --config configs/imdb/imdb_hardkuma
 
 To test a model, you can use the same `.yaml` config you used for training. After training, the test set is ran automatically. However, if you want to run the test loop afterwards, you may run:
 
-Test **SPECTRA** on *AgNews*: 
+Test **SPECTRA** on *AgNews*:
 ```bash
 python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra --ckpt {ckpt_path}
 ```
@@ -64,7 +66,7 @@ python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra -
 
 If for some reason you want to resume training from a given checkpoint, you will need to change your `.yaml` config so as to include `resume` args (you may copy the `predict` ones). Then, you may run:
 
-Resume **SPECTRA** on *AgNews*: 
+Resume **SPECTRA** on *AgNews*:
 ```bash
 python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra --ckpt {ckpt_path}
 ```
