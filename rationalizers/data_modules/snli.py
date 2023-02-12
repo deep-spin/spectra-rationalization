@@ -35,6 +35,7 @@ class SNLIDataModule(BaseDataModule):
         self.concat_inputs = d_params.get("concat_inputs", True)
         self.swap_pair = d_params.get("swap_pair", False)
         self.filter_neutrals = d_params.get("filter_neutrals", False)
+        self.ignore_neutrals = d_params.get("ignore_neutrals", False)
         self.use_revised_snli_val = d_params.get("use_revised_snli_val", False)
         if self.filter_neutrals:
             self.nb_classes = 2
@@ -240,13 +241,13 @@ class SNLIDataModule(BaseDataModule):
             self.dataset = self.dataset.filter(lambda ex: len(ex["prem_ids"]) <= self.max_seq_len)
             self.dataset = self.dataset.filter(lambda ex: len(ex["hyp_ids"]) <= self.max_seq_len)
 
-        if self.filter_neutrals:
-            def fix_labels(ex):
-                ex["label"] = 1 if ex["label"] == 2 else 0
-                return ex
-
+        if self.filter_neutrals or self.ignore_neutrals:
+            print('Filtering out neutrals')
             self.dataset = self.dataset.filter(lambda ex: ex["label"] != 1)
-            self.dataset = self.dataset.map(fix_labels)
+
+            if self.filter_neutrals:
+                print('Fixing labels to be 0/1')
+                self.dataset = self.dataset.map(lambda ex: min(ex['label'], 1))
 
         def get_dist(y):
             vals, counts = np.unique(y, return_counts=True)
