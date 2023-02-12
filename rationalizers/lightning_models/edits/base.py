@@ -170,6 +170,9 @@ class BaseEditor(TransformerBaseRationalizer):
                 # ar = torch.arange(y_prepend.shape[0], device=y_prepend.device)
                 # tmp[ar, y_prepend] = -1.0
                 # y_prepend = tmp.argmax(-1)
+            elif self.cf_task_name == 'nli_no_neutrals':
+                # Only swap entailments with contradictions
+                y_prepend = 2 - y_prepend
             elif self.cf_task_name == '20news':
                 y_prepend = y_contrast
             else:
@@ -181,8 +184,8 @@ class BaseEditor(TransformerBaseRationalizer):
                 e_mask = mask & (token_type_ids == self.cf_explainer_mask_token_type_id)
                 z_prepend = z_prepend.masked_fill(~e_mask, 0)
 
-        if self.cf_task_name == 'nli' or self.cf_task_name == 'qe':
-            # do not select EOS tokens to be edited
+        # do not select EOS tokens to be edited
+        if 'nli' in self.cf_task_name or self.cf_task_name == 'qe':
             z_prepend = z_prepend.masked_fill(x == self.eos_token_id, 0)
 
         # prepend label to input and rationale

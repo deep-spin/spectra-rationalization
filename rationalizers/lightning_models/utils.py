@@ -386,7 +386,7 @@ def prepend_label_for_t5(
             prefix_ids_neg.unsqueeze(0).expand(batch_size, -1),  # bad has label=0
             prefix_ids_pos.unsqueeze(0).expand(batch_size, -1),  # ok has label=1
         )
-    elif task_name == 'nli':
+    elif 'nli' in task_name:
         if nb_classes == 2:
             prefix_ids = torch.where(
                 y.unsqueeze(-1) == 0,
@@ -479,7 +479,7 @@ def prepend_label_for_t5_variable_length(
             prefix_ids_bad if y_ == 0 else prefix_ids_ok
             for y_ in y.tolist()
         ]
-    elif task_name == 'nli':
+    elif 'nli' in task_name:
         prefix_ids_ent = torch.tensor(
             tokenizer.encode('label: entailment input:', add_special_tokens=False),
             device=y.device
@@ -688,7 +688,7 @@ def get_contrast_label(y: torch.Tensor, num_classes: int, task_name: str = "bina
     """
     if task_name == "binary_classification" or task_name == "qe":
         contrast_label = 1 - y
-    elif task_name == "nli":
+    elif 'nli' in task_name:
         contrast_label = torch.randint(0, num_classes, y.shape).to(y.device)
         # entailment becomes contradiction
         contrast_label[y == 0] = 2
