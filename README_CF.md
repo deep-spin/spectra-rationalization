@@ -104,6 +104,12 @@ The trained rationalizer will be saved to the path specified in the `default_roo
 
 ---
 
+## Counterfactual Analysis
+
+To analyze the counterfactuals produced by the editor, follow the instructions in
+the `counterfactual_analysis.ipynb` notebook.
+
+
 ## Interpretability Analysis
 
 There are three types of analysis you can perform:
