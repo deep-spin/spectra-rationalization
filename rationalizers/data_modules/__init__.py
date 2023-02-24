@@ -10,6 +10,7 @@ from rationalizers.data_modules.hnli import HardNLIDataModule
 from rationalizers.data_modules.hotel_location import HotelLocationDataModule
 from rationalizers.data_modules.imdb import ImdbDataModule
 from rationalizers.data_modules.imdb_aug import AugmentedImdbDataModule
+from rationalizers.data_modules.imdb_sampled_subset import SampledSubsetImdbDataModule
 from rationalizers.data_modules.imdb_syn import SyntheticImdbDataModule
 from rationalizers.data_modules.imdb_syn_exp import SyntheticExplainImdbDataModule
 from rationalizers.data_modules.mlqepe import MLQEPEDataModule
@@ -76,4 +77,5 @@ available_data_modules = {
     "bnli": BreakNLIDataModule,
     "movies": MoviesDataModule,
     "20news": TwentyNewsGroupsDataModule,
+    "imdb_sampled_subset": SampledSubsetImdbDataModule,
 }

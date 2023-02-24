@@ -105,10 +105,6 @@ class SyntheticImdbDataModule(ImdbDataModule):
             example["is_original"] = 1
             return example
 
-        # function to filter out examples longer than max_seq_len
-        def _filter(example: dict):
-            return len(example["input_ids"]) <= self.max_seq_len
-
         # apply encode and filter
         self.dataset = self.dataset.map(_encode)
 
@@ -172,7 +168,9 @@ class SyntheticImdbDataModule(ImdbDataModule):
         self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=0)
         print(self.dataset)
 
-        # filter by length
+        # function to filter out examples longer than max_seq_len
+        def _filter(example: dict):
+            return len(example["input_ids"]) <= self.max_seq_len
         self.dataset = self.dataset.filter(_filter)
 
         # convert `columns` to pytorch tensors and keep un-formatted columns

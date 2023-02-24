@@ -130,7 +130,7 @@ class SyntheticExplainImdbDataModule(ImdbDataModule):
         self.dataset["train"] = hf_datasets.concatenate_datasets([self.dataset["train"], ds_syn["train"]], axis=1)
 
         if self.filter_invalid_edits:
-            # filter out examples with wrong predictions (i.e. edits that do not change the prediction)
+            # filter out exs with wrong predictions (i.e. edits that do not change the prediction)
             self.dataset["train"] = self.dataset["train"].filter(lambda ex: ex["cf_label"] == ex["cf_pred"])
 
         # cast cf_label to correct type
@@ -157,32 +157,32 @@ class SyntheticExplainImdbDataModule(ImdbDataModule):
             self.tokenizer = self.tokenizer_cls(tok_samples)
 
         # function to map strings to ids
-        def _encode(example: dict):
+        def _encode(ex: dict):
             if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                example["input_ids"] = self.tokenizer(
-                    example["text"].strip(),
+                ex["input_ids"] = self.tokenizer(
+                    ex["text"].strip(),
                     padding=False,  # do not pad, padding will be done later
                     truncation=True,  # truncate to max length accepted by the model
                 )["input_ids"]
             else:
-                example["input_ids"] = self.tokenizer.encode(example["text"].strip())
-            if 'cf_text' in example:
-                example["z"] = torch.as_tensor((example["z"]), dtype=torch.float32)
-                example["cf_z_pre"] = torch.as_tensor((example["cf_z_pre"][2:]), dtype=torch.float32)
-                example["cf_z_pos"] = torch.as_tensor((example["cf_z_pos"]), dtype=torch.float32)
+                ex["input_ids"] = self.tokenizer.encode(ex["text"].strip())
+            if 'cf_text' in ex:
+                ex["z"] = torch.as_tensor((ex["z"]), dtype=torch.float32)
+                ex["cf_z_pre"] = torch.as_tensor((ex["cf_z_pre"][2:]), dtype=torch.float32)
+                ex["cf_z_pos"] = torch.as_tensor((ex["cf_z_pos"]), dtype=torch.float32)
                 if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                    example["cf_input_ids"] = self.tokenizer.convert_tokens_to_ids(example['cf_text'].strip().split())
+                    ex["cf_input_ids"] = self.tokenizer.convert_tokens_to_ids(ex['cf_text'].strip().split())
                 else:
-                    example["cf_input_ids"] = self.tokenizer.encode(example["cf_text"].strip())
+                    ex["cf_input_ids"] = self.tokenizer.encode(ex["cf_text"].strip())
                 max_len = self.tokenizer.model_max_length or self.max_seq_len
-                example["cf_input_ids"] = example["cf_input_ids"][:max_len]
-                example["cf_z_pre"] = example["cf_z_pre"][:max_len]
-                example["cf_z_pos"] = example["cf_z_pos"][:max_len]
-            return example
+                ex["cf_input_ids"] = ex["cf_input_ids"][:max_len]
+                ex["cf_z_pre"] = ex["cf_z_pre"][:max_len]
+                ex["cf_z_pos"] = ex["cf_z_pos"][:max_len]
+            return ex
 
-        # function to filter out examples longer than max_seq_len
-        def _filter(example: dict):
-            return len(example["input_ids"]) <= self.max_seq_len
+        # function to filter out exs longer than max_seq_len
+        def _filter(ex: dict):
+            return len(ex["input_ids"]) <= self.max_seq_len
 
         # apply encode and filter
         self.dataset = self.dataset.map(_encode)
