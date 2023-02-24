@@ -31,6 +31,9 @@ if __name__ == "__main__":
         action='store_true',
         help="Whether to disable model fitting during training. Useful for evaluation.",
     )
+    parser.add_argument("--ff-lbda", type=float, default=None)
+    parser.add_argument("--cf-lbda", type=float, default=None)
+    parser.add_argument("--expl-lbda", type=float, default=None)
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
@@ -95,6 +98,14 @@ if __name__ == "__main__":
             **general_dict,
             "ckpt": ckpt_path,
         }
+
+    # custom args
+    custom_args = ["ff_lbda", "cf_lbda", "expl_lbda"]
+    for arg in custom_args:
+        if tmp_dict_args[arg] is not None:
+            config_dict[arg] = tmp_dict_args[arg]
+        elif arg in yaml_config_dict.keys():
+            config_dict[arg] = yaml_config_dict[arg]
 
     # define args
     args = argparse.Namespace(**config_dict)
