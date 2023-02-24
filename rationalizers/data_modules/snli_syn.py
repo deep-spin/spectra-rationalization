@@ -107,31 +107,18 @@ class SyntheticSNLIDataModule(SNLIDataModule):
         # map strings to ids
         def _encode(ex: dict):
             if isinstance(self.tokenizer, PreTrainedTokenizerBase):
-                if not self.swap_pair:
-                    input_enc = self.tokenizer(
-                        ex["premise"].strip(),
-                        ex["hypothesis"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )
-                else:
-                    input_enc = self.tokenizer(
-                        ex["hypothesis"].strip(),
-                        ex["premise"].strip(),
-                        padding=False,  # do not pad, padding will be done later
-                        truncation=True,  # truncate to max length accepted by the model
-                    )
+                input_enc = self.tokenizer(
+                    ex["premise"].strip(),
+                    ex["hypothesis"].strip(),
+                    padding=False,  # do not pad, padding will be done later
+                    truncation=True,  # truncate to max length accepted by the model
+                )
                 ex["input_ids"] = input_enc["input_ids"]
                 ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             else:
-                if not self.swap_pair:
-                    ex["input_ids"] = self.tokenizer.encode(
-                        ex["premise"].strip() + ' ' + self.sep_token + ' ' + ex["hypothesis"].strip()
-                    )
-                else:
-                    ex["input_ids"] = self.tokenizer.encode(
-                        ex["hypothesis"].strip() + ' ' + self.sep_token + ' ' + ex["premise"].strip()
-                    )
+                ex["input_ids"] = self.tokenizer.encode(
+                    ex["premise"].strip() + ' ' + self.sep_token + ' ' + ex["hypothesis"].strip()
+                )
                 ex["token_type_ids"] = token_type_ids_from_input_ids(ex["input_ids"], self.sep_token_id)
             ex['is_original'] = 1
             return ex
