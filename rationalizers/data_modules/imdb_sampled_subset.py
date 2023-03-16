@@ -10,7 +10,7 @@ class SampledSubsetImdbDataModule(ImdbDataModule):
 
     def __init__(self, d_params: dict, tokenizer: object = None):
         super().__init__(d_params, tokenizer)
-        self.path = d_params['path']
+        self.path = d_params.get('path', 'data/sampled_imdb/')
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders

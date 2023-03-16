@@ -42,6 +42,11 @@ class AugmentedSNLIDataModule(SNLIDataModule):
         # select only the contrastive samples
         if self.is_original is not None:
             d_aug = d_aug.filter(lambda ex: ex['is_original'] == self.is_original)
+
+        # remove neutrals
+        if self.ignore_neutrals:
+            d_aug = d_aug.filter(lambda ex: ex['label'] != 1)
+
         d_aug = d_aug.rename_column("prem", "premise")
         d_aug = d_aug.rename_column("hyp", "hypothesis")
         d_aug = d_aug.remove_columns(["batch_id", "is_original"])

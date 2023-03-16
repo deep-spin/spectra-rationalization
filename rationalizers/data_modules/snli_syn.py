@@ -168,10 +168,13 @@ class SyntheticSNLIDataModule(SNLIDataModule):
             train_size = len(self.dataset["train"])
             syn_size = int(train_size * self.pct_synthetic_dataset_size)
             df_syn_train = ds_syn["train"].to_pandas()
-            df_ent = df_syn_train[df_syn_train['label'] == 0].sample(frac=1).iloc[:syn_size // 3]
-            df_neu = df_syn_train[df_syn_train['label'] == 1].sample(frac=1).iloc[:syn_size // 3]
-            df_con = df_syn_train[df_syn_train['label'] == 2].sample(frac=1).iloc[:syn_size // 3]
-            sel_idxs = df_ent.index.tolist() + df_neu.index.tolist() + df_con.index.tolist()
+            # df_ent = df_syn_train[df_syn_train['label'] == 0].sample(frac=1).iloc[:syn_size // 3]
+            # df_neu = df_syn_train[df_syn_train['label'] == 1].sample(frac=1).iloc[:syn_size // 3]
+            # df_con = df_syn_train[df_syn_train['label'] == 2].sample(frac=1).iloc[:syn_size // 3]
+            # sel_idxs = df_ent.index.tolist() + df_neu.index.tolist() + df_con.index.tolist()
+            df_ent = df_syn_train[df_syn_train['label'] == 0].sample(frac=1).iloc[:syn_size // 2]
+            df_con = df_syn_train[df_syn_train['label'] == 2].sample(frac=1).iloc[:syn_size // 2]
+            sel_idxs = df_ent.index.tolist() + df_con.index.tolist()
             ds_syn["train"] = ds_syn["train"].select(sel_idxs)
             print(ds_syn)
             print(np.unique(self.dataset["train"]["label"], return_counts=True))

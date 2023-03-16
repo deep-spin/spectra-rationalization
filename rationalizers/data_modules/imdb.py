@@ -105,6 +105,7 @@ class ImdbDataModule(BaseDataModule):
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
+            ignore_verifications=True  # weird checksum mismatch from hf_datasets???
         )
         # remove unnecessary data
         del self.dataset['unsupervised']

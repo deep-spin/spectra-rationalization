@@ -20,6 +20,7 @@ class AugmentedImdbDataModule(ImdbDataModule):
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
             download_mode=hf_datasets.DownloadMode.REUSE_CACHE_IF_EXISTS,
+            ignore_verifications=True  # weird checksum mismatch from hf_datasets???
         )
         modified_dataset = self.dataset["train"].train_test_split(test_size=0.1)
         self.dataset["train"] = modified_dataset["train"]
