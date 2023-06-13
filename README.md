@@ -75,5 +75,3 @@ python3 -W ignore rationalizers predict --config configs/agnews/agnews_spectra -
 We want to thank Marcos Treviso for helping starting this codebase. We are also very grateful to Vlad Niculae for all the help he provided regarding the use of the LP-SparseMAP library. We also thank Jasmijn Bastings because the code in this repository was inspired by the structure and implementations in [Interpretable Predictions](https://github.com/bastings/interpretable_predictions).
 
 ---
-
-<a name="myfootnote1">1</a>: Soon, we will add the fusedmax strategy to the repo.
