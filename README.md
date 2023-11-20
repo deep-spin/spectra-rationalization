@@ -23,7 +23,7 @@ This code was tested on `Python 3.8.2`. To install, follow these steps:
 
 1. In a virtual environment, first install Cython: `pip install cython`
 2. Clone the [Eigen](https://gitlab.com/libeigen/eigen.git) repository to the main folder: `git clone git@gitlab.com:libeigen/eigen.git`
-3. Clone the [LP-SparseMAP](https://github.com/nunonmg/lp-sparsemap) fork repository to main folder, and follow the installation instructions found there
+3. Clone the [LP-SparseMAP](https://github.com/nunonmg/lp-sparsemap) fork repository to main folder, and follow the installation instructions found there (*for reproducibility purposes, please use this [commit](https://github.com/deep-spin/lp-sparsemap/commit/dd01298d00727bde87e30da2bf493ce8831c01c8)*)
 4. Install PyTorch: `pip install torch` (we used version 1.6.0)
 5. Install the requirements: `pip install -r requirements.txt`
 6. Install the `spectra-rationalization` package: `pip install .` (or in editable mode if you want to make changes: `pip install -e .`)
