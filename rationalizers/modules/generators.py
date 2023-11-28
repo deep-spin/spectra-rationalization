@@ -52,7 +52,7 @@ class SPECTRAGenerator(nn.Module):
     def forward(self, x, current_epoch, mask):
         # encode sentence
         batch_size, target_size = x.shape
-        lengths = mask.long().sum(1)
+        lengths = mask.long().sum(1).cpu()
         emb = self.embed_layer(x)  # [B, T, E]
 
         # [B, T, H]
@@ -89,6 +89,7 @@ class SPECTRAGenerator(nn.Module):
             transition[: lengths[k] + 1, 0, 0] = (
                 transition_scores[: lengths[k] + 1] / self.temperature
             )
+            transition = transition.reshape(-1)[2:-2]
 
             # H:SeqBudget consists of a single factor so, in this particular case, the LP-SparseMAP solution is
             # indeed the SparseMAP solution and it can be found within a single iteration.

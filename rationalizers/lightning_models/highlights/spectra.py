@@ -1,6 +1,8 @@
 import logging
 
 import pytorch_lightning as pl
+import torchmetrics
+
 import torch
 from torch import nn
 from torchnlp.encoders.text import StaticTokenizerEncoder
@@ -53,25 +55,46 @@ class SPECTRARationalizer(BaseRationalizer):
         self.save_hyperparameters(h_params)
 
         # define metrics
+        # if self.is_multilabel:
+            # self.train_accuracy = pl.metrics.Accuracy()
+            # self.val_accuracy = pl.metrics.Accuracy()
+            # self.test_accuracy = pl.metrics.Accuracy()
+            # self.train_precision = pl.metrics.Precision(
+            #     num_classes=nb_classes, average="macro"
+            # )
+            # self.val_precision = pl.metrics.Precision(
+            #     num_classes=nb_classes, average="macro"
+            # )
+            # self.test_precision = pl.metrics.Precision(
+            #     num_classes=nb_classes, average="macro"
+            # )
+            # self.train_recall = pl.metrics.Recall(
+            #     num_classes=nb_classes, average="macro"
+            # )
+            # self.val_recall = pl.metrics.Recall(num_classes=nb_classes, average="macro")
+            # self.test_recall = pl.metrics.Recall(
+            #     num_classes=nb_classes, average="macro"
+            # )
+        # define metrics
         if self.is_multilabel:
-            self.train_accuracy = pl.metrics.Accuracy()
-            self.val_accuracy = pl.metrics.Accuracy()
-            self.test_accuracy = pl.metrics.Accuracy()
-            self.train_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.test_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.train_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.val_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.val_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.test_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.test_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.train_recall = pl.metrics.Recall(
-                num_classes=nb_classes, average="macro"
+            self.train_recall = torchmetrics.Recall(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.val_recall = pl.metrics.Recall(num_classes=nb_classes, average="macro")
-            self.test_recall = pl.metrics.Recall(
-                num_classes=nb_classes, average="macro"
+            self.val_recall = torchmetrics.Recall(task="multiclass", num_classes=nb_classes, average="macro")
+            self.test_recall = torchmetrics.Recall(
+                task="multiclass", num_classes=nb_classes, average="macro"
             )
 
         # load word embedding weights based on `emb_type` and define the embedding layer
@@ -152,3 +175,4 @@ class SPECTRARationalizer(BaseRationalizer):
         stats[prefix + "_ps"] = (num_c + num_1) / float(total)
 
         return loss, stats
+

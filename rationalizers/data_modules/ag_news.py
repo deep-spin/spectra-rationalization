@@ -92,7 +92,7 @@ class AgNewsDataModule(BaseDataModule):
         # download data, prepare and store it (do not assign to self vars)
         _ = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             save_infos=True,
         )
 
@@ -100,16 +100,16 @@ class AgNewsDataModule(BaseDataModule):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
         )
         self.dataset["train"] = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=None,  #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             split="train[:85%]",
         )
         self.dataset["validation"] = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             split="train[-15%:]",
         )
 
