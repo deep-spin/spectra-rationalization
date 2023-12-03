@@ -116,7 +116,7 @@ class BeerDataModule(BaseDataModule):
         _ = hf_datasets.load_dataset(
             path=self.path,
             aspect_subset=self.aspect_subset,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             save_infos=True,
         )
 
@@ -124,8 +124,8 @@ class BeerDataModule(BaseDataModule):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             aspect_subset=self.aspect_subset,
-            download_mode=hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
         )
 
         # build tokenizer info (vocab + special tokens) based on train and validation set

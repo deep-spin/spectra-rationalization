@@ -162,8 +162,8 @@ class SPECTRARationalizer(BaseRationalizer):
 
         # main MSE loss for p(y | x,z)
         if not self.is_multilabel:
-            loss_vec = loss_vec.mean(1)  # [B,C] -> [B]
-            stats["mse"] = float(loss_vec.item())
+            loss = loss_vec.mean(0)  # [B,C] -> [B] # how are you doing item on [B]?!
+            stats["mse"] = loss.item() 
         else:
             loss = loss_vec.mean()  # [1]
             stats["criterion"] = float(loss.item())  # [1]
