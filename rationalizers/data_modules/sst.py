@@ -108,7 +108,7 @@ class SSTDataModule(BaseDataModule):
             path=self.path,
             granularity=self.granularity,
             subtrees=self.subtrees,
-            download_mode=hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
             save_infos=True,
         )
 
@@ -118,7 +118,7 @@ class SSTDataModule(BaseDataModule):
             path=self.path,
             granularity=self.granularity,
             subtrees=self.subtrees,
-            download_mode=hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
+            download_mode=None, #hf_datasets.GenerateMode.REUSE_CACHE_IF_EXISTS,
         )
 
         # build tokenize rand label encoder
