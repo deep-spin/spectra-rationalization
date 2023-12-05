@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from entmax import sparsemax
 from torch import nn
+from torch.distributions import MultivariateNormal
 
 from rationalizers.builders import build_sentence_encoder
 from rationalizers.modules.gates import BernoulliGate, RelaxedBernoulliGate, KumaGate
@@ -12,6 +13,130 @@ from rationalizers.modules.sparsemap import (
     seq_budget_smap,
 )
 
+
+class MixedSPECTRAGenerator(nn.Module):
+    """
+    The Generator takes an input text and returns samples from p(z|x)
+    """
+
+    def __init__(
+        self,
+        embed: nn.Embedding = None,
+        hidden_size: int = 200,
+        dropout: float = 0.1,
+        layer: str = "lstm",
+        bidirectional: bool = True,
+        budget: int = 0,
+        init: bool = False,
+        max_iter: int = 100,
+        transition: int = 0,
+        temperature: float = 0.01,
+    ):
+        super().__init__()
+
+        emb_size = embed.weight.shape[1]
+        enc_size = 2 * hidden_size if bidirectional else hidden_size
+        self.embed_layer = nn.Sequential(embed, nn.Dropout(p=dropout))
+        self.enc_layer = build_sentence_encoder(
+            layer, emb_size, hidden_size, bidirectional=bidirectional
+        )
+        self.layer = nn.Linear(enc_size, 1)
+        # self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
+        self.init = init
+        self.max_iter = max_iter
+        self.z = None  # z samples
+        # self.z_dists = []  # z distribution(s)
+        self.transition = transition
+        self.budget = budget
+        self.temperature = temperature
+
+    def forward(self, x, current_epoch, mask):
+        # encode sentence
+        batch_size, target_size = x.shape
+        lengths = mask.long().sum(1)
+        emb = self.embed_layer(x)  # [B, T, E]
+
+        # [B, T, H]
+        h, _ = self.enc_layer(emb, mask, lengths)
+
+        # compute attention scores
+        # [B, T, H] -> [B, T, 1]
+        h1 = self.layer(h)
+        # print(h1.shape)
+        # gaussians = MultivariateNormal(torch.zeros(h1.size()), scale_tril = torch.eye(h1.size())).rsample()
+        # h2 = h1+ gaussians
+
+        t = torch.full((batch_size, target_size + 1), float(self.transition))
+        z = []
+        num_states = 2
+
+        for k in range(batch_size):
+            scores = h1[k].view(-1)
+            # print(scores.shape)
+            gaussian = MultivariateNormal(torch.zeros(scores.size()).to(scores.device), scale_tril = torch.eye(scores.size()[0]).to(scores.device)).rsample()
+            scores = scores + gaussian
+            budget = torch.round(self.budget / 100 * lengths[k])
+            length = scores.shape[0]
+
+            # Set unary scores for valid positions
+            x = torch.cat(
+                (
+                    scores.unsqueeze(-1) / self.temperature,
+                    torch.zeros((length, 1), device=scores.device),
+                ),
+                dim=-1,
+            )
+            x[lengths[k] :, 0] = -1e12
+            # print(x.shape)
+            # print(x)
+
+            # Set transition scores for valid positions
+            transition_scores = torch.tensor(t[k], device=scores.device)
+            transition = torch.zeros(
+                (length + 1, num_states, num_states), device=scores.device
+            )
+            transition[: lengths[k] + 1, 0, 0] = (
+                transition_scores[: lengths[k] + 1] / self.temperature
+            )
+            transition = transition.reshape(-1)[2:-2]
+            
+            
+            # H:SeqBudget consists of a single factor so, in this particular case, the LP-SparseMAP solution is
+            # indeed the SparseMAP solution and it can be found within a single iteration.
+            self.max_iter = 1
+            self.step_size = 0.0
+
+            if self.training:
+                z_probs = seq_budget_smap(
+                    x,
+                    transition,
+                    budget=budget,
+                    temperature=self.temperature,
+                    init=self.init,
+                    max_iter=self.max_iter,
+                    step_size=self.step_size,
+                )
+            else:
+                test_temperature = 1e-3
+                z_probs = seq_budget_smap(
+                    x / test_temperature,
+                    transition / test_temperature,
+                    budget=budget,
+                    temperature=test_temperature,
+                    init=self.init,
+                    max_iter=self.max_iter,
+                    step_size=self.step_size,
+                )
+
+            z_probs #.cuda()
+            z.append(z_probs)
+
+        z = torch.stack(z, dim=0).squeeze(-1)  # [B, T]
+        z = z #.cuda()
+        z = torch.where(mask, z, z.new_zeros([1]))
+        self.z = z
+
+        return z
 
 class SPECTRAGenerator(nn.Module):
     """

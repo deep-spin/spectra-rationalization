@@ -1,5 +1,7 @@
 from rationalizers.lightning_models.highlights.bernoulli import BernoulliRationalizer
 from rationalizers.lightning_models.highlights.spectra import SPECTRARationalizer
+from rationalizers.lightning_models.highlights.mixed_spectra import MixedSPECTRARationalizer
+
 from rationalizers.lightning_models.highlights.sparsemax import SparsemaxRationalizer
 from rationalizers.lightning_models.matchings.faithful_sparsemap_matching import (
     SparseMAPFaithfulMatching,
@@ -22,4 +24,5 @@ available_models = {
     "vanilla": VanillaClassifier,
     "esim": ESIMMatching,
     "hardkuma": HardKumaRationalizer,
+    "mixed_spectra": MixedSPECTRARationalizer,
 }
