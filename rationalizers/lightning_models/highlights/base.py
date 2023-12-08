@@ -215,6 +215,8 @@ class BaseRationalizer(pl.LightningModule):
         if "annotations" in batch.keys():
             output[f"{prefix}_annotations"] = batch["annotations"]
 
+        # print("ANNOT", len(batch["annotations"]))
+
         if "mse" in loss_stats.keys():
             output[f"{prefix}_mse"] = loss_stats["mse"]
 
@@ -261,22 +263,22 @@ class BaseRationalizer(pl.LightningModule):
         }
 
         # log rationales
-        from random import shuffle
-        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
-        if prefix != 'test':
-            shuffle(idxs)
-            idxs = idxs[:10]
-        else:
-            idxs = idxs[:100]
-        select = lambda v: [v[i] for i in idxs]
+        # from random import shuffle
+        # idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        # if prefix != 'test':
+        #     shuffle(idxs)
+        #     idxs = idxs[:10]
+        # else:
+        #     idxs = idxs[:100]
+        # select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
-        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
-        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
-        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
-        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
-        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+        # pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        # scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        # gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        # pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        # lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        # html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        # self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
         # save rationales
         if self.hparams.save_rationales:
@@ -288,6 +290,13 @@ class BaseRationalizer(pl.LightningModule):
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+            # print(stacked_outputs["test_ids_rationales"],
+            #     stacked_outputs["test_annotations"],
+            #     stacked_outputs["test_lengths"],)
+            print(len(stacked_outputs["test_annotations"]))
+            print(len(stacked_outputs["test_ids_rationales"]))
+            print(len(stacked_outputs["test_lengths"]))
+
             rat_metrics = evaluate_rationale(
                 stacked_outputs["test_ids_rationales"],
                 stacked_outputs["test_annotations"],
