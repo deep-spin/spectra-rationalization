@@ -1,5 +1,6 @@
 from functools import partial
 from itertools import chain
+import ipdb
 
 import datasets as hf_datasets
 import torch
@@ -98,7 +99,9 @@ class BeerDataModule(BaseDataModule):
             scores = scores[:, self.aspect_id].unsqueeze(1)
 
         # keep annotations and tokens in raw format
-        annotations = collated_samples["annotations"]
+        # ipdb.set_trace()
+        # annotations = collated_samples["annotations"]
+        annotations = [sample['annotations'] for sample in samples]
         tokens = collated_samples["tokens"]
 
         # return batch to the data loaders

@@ -293,9 +293,9 @@ class BaseRationalizer(pl.LightningModule):
             # print(stacked_outputs["test_ids_rationales"],
             #     stacked_outputs["test_annotations"],
             #     stacked_outputs["test_lengths"],)
-            print(len(stacked_outputs["test_annotations"]))
-            print(len(stacked_outputs["test_ids_rationales"]))
-            print(len(stacked_outputs["test_lengths"]))
+            # print(len(stacked_outputs["test_annotations"]))
+            # print(len(stacked_outputs["test_ids_rationales"]))
+            # print(len(stacked_outputs["test_lengths"]))
 
             rat_metrics = evaluate_rationale(
                 stacked_outputs["test_ids_rationales"],

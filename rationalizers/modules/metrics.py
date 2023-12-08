@@ -25,20 +25,22 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
         z_ex_nonzero_sum = z_ex_nonzero.sum().item()
 
         # make this work for multiple aspects
-        aspect_annotations = [ell.tolist() for ell in annotations[i][0]]
+        # aspect_annotations = [ell.tolist() for ell in annotations[i][0]]
+        aspect_annotations = unroll(annotations[i])
+        print(aspect_annotations)
         if len(aspect_annotations) == 0:
             continue
-        annotations_range = [[a[0], a[1]] for a in aspect_annotations]
-        print(annotations_range[0], z_ex[0])
+        # annotations_range = [[a[0], a[1]] for a in aspect_annotations]
+        # print(annotations_range[0], z_ex[0])
         matched = sum(
             1
             for i, zi in enumerate(z_ex)
-            if zi > 0 and any(range[0] <= i < range[1] for range in annotations_range)
+            if zi > 0 and any(range[0] <= i < range[1] for range in aspect_annotations)
         )
         non_matched = sum(
             1
             for i, zi in enumerate(z_ex)
-            if zi == 0 and any(range[0] <= i < range[1] for range in annotations_range)
+            if zi == 0 and any(range[0] <= i < range[1] for range in aspect_annotations)
         )
         precision = matched / (z_ex_nonzero_sum + 1e-9)
         recall = matched / (matched + non_matched + 1e-9)
