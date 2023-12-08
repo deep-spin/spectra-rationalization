@@ -1,5 +1,7 @@
 import logging
 import math
+import os
+import wandb
 import numpy as np
 import pytorch_lightning as pl
 import torchmetrics
@@ -11,7 +13,7 @@ from torch import nn
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.modules.metrics import evaluate_rationale
-from rationalizers.utils import get_rationales
+from rationalizers.utils import get_rationales, get_html_rationales, unroll, save_rationales
 
 shell_logger = logging.getLogger(__name__)
 
@@ -182,6 +184,11 @@ class BaseRationalizer(pl.LightningModule):
             self.tokenizer, input_ids, z_1, batch["lengths"]
         )
 
+        if hasattr(self.tokenizer, 'convert_ids_to_tokens'):
+            pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        else:
+            pieces = [[self.tokenizer.index_to_token[i] for i in idxs] for idxs in input_ids.tolist()]
+
         self.log(
             f"{prefix}_sum_loss",
             loss.item(),
@@ -197,7 +204,9 @@ class BaseRationalizer(pl.LightningModule):
             f"{prefix}_ps": loss_stats[prefix + "_ps"],
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
+            f"{prefix}_pieces": pieces,
             f"{prefix}_tokens": batch["tokens"],
+            f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": batch["labels"].tolist(),
             f"{prefix}_lengths": batch["lengths"].tolist(),
@@ -250,6 +259,32 @@ class BaseRationalizer(pl.LightningModule):
             f"avg_{prefix}_ps": avg_outputs[f"avg_{prefix}_ps"],
             f"avg_{prefix}_sum_loss": avg_outputs[f"avg_{prefix}_sum_loss"],
         }
+
+        # log rationales
+        from random import shuffle
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        if prefix != 'test':
+            shuffle(idxs)
+            idxs = idxs[:10]
+        else:
+            idxs = idxs[:100]
+        select = lambda v: [v[i] for i in idxs]
+        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
+        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+
+        # save rationales
+        if self.hparams.save_rationales:
+            scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
+            lens = unroll(stacked_outputs[f"{prefix}_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+            shell_logger.info(f'Saving rationales in {filename}...')
+            save_rationales(filename, scores, lens)
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
@@ -401,4 +436,3 @@ class BaseRationalizer(pl.LightningModule):
                 torch.nn.init.constant_(p, 0.0)
             else:
                 print("{:10s} {:20s} {}".format("unchanged", name, p.shape))
-

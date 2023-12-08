@@ -7,6 +7,7 @@ default_root_dir: 'experiments/beer-mixed-spectra/'  # path to save logs and mod
 train:
 
     # io
+    # save_rationales: True  
     save_tokenizer: True        # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
     save_label_encoder: True    # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
@@ -55,15 +56,15 @@ train:
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
     transition: 0.001
-    budget: 10
+    budget: 5
     temperature: 0.05
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
     gpus: 1
     gradient_clip_val: 5.0
-    min_epochs: 5
-    max_epochs: 25
+    min_epochs: 1
+    max_epochs: 1
     #limit_test_batches:
     #limit_train_batches: 10
     #limit_val_batches: 2

@@ -55,7 +55,7 @@ train:
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
     transition: 0.001
-    budget: 20
+    budget: 5
     temperature: 0.05
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
