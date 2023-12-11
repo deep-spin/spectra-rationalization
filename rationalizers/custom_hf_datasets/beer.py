@@ -175,5 +175,5 @@ class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
                     yield id_, {
                         "tokens": tokens,
                         "scores": scores,
-                        "annotations": [[[0]]],  # dummy value
+                        "annotations": None,  # dummy value
                     }
