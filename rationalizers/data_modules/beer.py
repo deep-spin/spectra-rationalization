@@ -1,6 +1,5 @@
 from functools import partial
 from itertools import chain
-import ipdb
 
 import datasets as hf_datasets
 import torch
@@ -31,7 +30,7 @@ class BeerDataModule(BaseDataModule):
         self.is_multilabel = self.transform_to_multiclass
 
         # deal with single aspect experiments
-        self.nb_classes = 5 if self.aspect_subset == "260k" else 1
+        self.nb_classes = 2 if self.aspect_subset == "260k" else 1
         self.aspect_id = (
             -1 if self.aspect_subset == "260k" else int(self.aspect_subset[-1])
         )
@@ -69,13 +68,13 @@ class BeerDataModule(BaseDataModule):
         if are_samples_batched:
             # dataloader batch size is 1 -> the sampler is responsible for batching
             samples = samples[0]
+        
+        allowed_samples = []
+        for sample in samples:
+            if len(sample["input_ids"]) < 257:
+                allowed_samples.append(sample)
 
-        # allowed_samples = []
-        # for sample in samples:
-        #     if len(sample["input_ids"]) < 257:
-        #         allowed_samples.append(sample)
-
-        # samples = allowed_samples
+        samples = allowed_samples
 
         # convert list of dicts to dict of lists
         collated_samples = collate_tensors(samples, stack_tensors=list)
@@ -99,38 +98,53 @@ class BeerDataModule(BaseDataModule):
             scores = scores[:, self.aspect_id].unsqueeze(1)
 
         # keep annotations and tokens in raw format
-        # ipdb.set_trace()
-        # annotations = collated_samples["annotations"]
-        annotations = [sample['annotations'] for sample in samples]
         tokens = collated_samples["tokens"]
+        annotations = collated_samples["annotations"]
 
-        # return batch to the data loaders
-        batch = {
-            "input_ids": input_ids,
-            "lengths": lengths,
-            "annotations": annotations,
-            "tokens": tokens,
-            "labels": scores,
-        }
+        if None not in collated_samples["annotations"]:
+            old_annotations = collated_samples["annotations"]
+            annotations = []
+            for aspect_i in range(len(old_annotations)):
+                aspect_annotations = old_annotations[aspect_i]
+                annotation_chunk = []
+                if len(aspect_annotations) != 0:
+                    for chunk in aspect_annotations:
+                        j = 0
+                        if len(chunk) != 0:
+                            j+=1
+                            annotation_chunk.append([chunk[0][0], chunk[1][0]])
+                            if j == len(annotation_chunk):
+                                annotations.append(annotation_chunk)
+                else:
+                    annotations.append(aspect_annotations)
+            annotations = [annotations[x:x+5] for x in range(0, len(annotations), 5)]
+
+            # return batch to the data loaders
+            batch = {
+                "input_ids": input_ids,
+                "lengths": lengths,
+                "annotations": annotations,
+                "tokens": tokens,
+                "labels": scores,
+            }
+        else:
+            batch = {
+                "input_ids": input_ids,
+                "lengths": lengths,
+                "annotations": None,
+                "tokens": tokens,
+                "labels": scores,
+            }
         return batch
-
-    def prepare_data(self):
-        # download data, prepare and store it (do not assign to self vars)
-        _ = hf_datasets.load_dataset(
-            path=self.path,
-            aspect_subset=self.aspect_subset,
-            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
-            save_infos=True,
-        )
 
     def setup(self, stage: str = None):
         # Assign train/val/test datasets for use in dataloaders
         self.dataset = hf_datasets.load_dataset(
             path=self.path,
-            download_mode=None, #hf_datasets.GenerateMode.REUSE_DATASET_IF_EXISTS,
             aspect_subset=self.aspect_subset,
+            download_mode=hf_datasets.DownloadMode.REUSE_DATASET_IF_EXISTS,
         )
-
+        
         # build tokenizer info (vocab + special tokens) based on train and validation set
         tok_samples = chain(
             self.dataset["train"]["tokens"], self.dataset["validation"]["tokens"]

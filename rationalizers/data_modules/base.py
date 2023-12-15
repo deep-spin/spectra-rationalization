@@ -83,6 +83,6 @@ class BaseDataModule(pl.LightningDataModule):
             self.dataset["test"],
             sampler=sampler,
             collate_fn=self._collate_fn,
-            batch_size=self.batch_size,
+            batch_size=1,
             num_workers=self.num_workers,
         )
