@@ -16,7 +16,7 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
     test_ids = unroll(test_ids)
     annotations = unroll(annotations)
     lengths = unroll(lengths)
-    print(len(test_ids), len(annotations), len(lengths))
+    # print(len(test_ids), len(annotations), len(lengths))
     # print(annotations)
 
     for i in range(len(test_ids)):
@@ -27,7 +27,7 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
         # make this work for multiple aspects
         # aspect_annotations = [ell.tolist() for ell in annotations[i][0]]
         aspect_annotations = unroll(annotations[i])
-        print(aspect_annotations)
+        # print(aspect_annotations)
         if len(aspect_annotations) == 0:
             continue
         # annotations_range = [[a[0], a[1]] for a in aspect_annotations]

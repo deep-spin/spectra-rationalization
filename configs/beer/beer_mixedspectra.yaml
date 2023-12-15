@@ -63,8 +63,8 @@ train:
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
     gpus: 1
     gradient_clip_val: 5.0
-    min_epochs: 1
-    max_epochs: 1
+    min_epochs: 5
+    max_epochs: 25
     #limit_test_batches:
     #limit_train_batches: 10
     #limit_val_batches: 2
