@@ -20,6 +20,7 @@ if __name__ == "__main__":
         type=str,
         help="Path to a saved model checkpoint. Used for `predict` only. Will overwrite config file's option.",
     )
+    parser.add_argument("--seed", type=int, help="Seed for reproducibility.")
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
@@ -86,6 +87,10 @@ if __name__ == "__main__":
             **general_dict,
             "ckpt": ckpt_path,
         }
+        
+    # overwrite seed if it was passed as an argument
+    if tmp_args.seed is not None:
+        config_dict["seed"] = tmp_args.seed
 
     # define args
     args = argparse.Namespace(**config_dict)
