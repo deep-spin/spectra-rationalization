@@ -6,13 +6,21 @@ import torch
 from entmax import sparsemax
 from torch import nn
 from torch.distributions import MultivariateNormal
+import torch.nn as nn
+
 
 from rationalizers.builders import build_sentence_encoder
 from rationalizers.modules.gates import BernoulliGate, RelaxedBernoulliGate, KumaGate
 from rationalizers.modules.sparsemap import (
     seq_budget_smap,
 )
+torch.autograd.set_detect_anomaly(True)
 
+def toeplitz(c, r):
+    vals = torch.cat((r, c[1:].flip(0)))
+    shape = len(c), len(r)
+    i, j = torch.ones(*shape).nonzero().T
+    return vals[j-i].reshape(*shape)
 
 class MixedSPECTRAGenerator(nn.Module):
     """
@@ -22,7 +30,7 @@ class MixedSPECTRAGenerator(nn.Module):
     def __init__(
         self,
         embed: nn.Embedding = None,
-        hidden_size: int = 200,
+        hidden_size: int = 400,
         dropout: float = 0.1,
         layer: str = "lstm",
         bidirectional: bool = True,
@@ -35,12 +43,14 @@ class MixedSPECTRAGenerator(nn.Module):
         super().__init__()
 
         emb_size = embed.weight.shape[1]
-        enc_size = 2 * hidden_size if bidirectional else hidden_size
+        # enc_size = 2*hidden_size if bidirectional else hidden_size
         self.embed_layer = nn.Sequential(embed, nn.Dropout(p=dropout))
         self.enc_layer = build_sentence_encoder(
             layer, emb_size, hidden_size, bidirectional=bidirectional
         )
-        self.layer = nn.Linear(enc_size, 1)
+        self.layer = nn.Linear(200, 1)
+        self.layer2 = nn.Linear(200, 1)
+
         # self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
         self.init = init
         self.max_iter = max_iter
@@ -58,23 +68,47 @@ class MixedSPECTRAGenerator(nn.Module):
 
         # [B, T, H]
         h, _ = self.enc_layer(emb, mask, lengths)
+        # print('h', h.requires_grad)
 
         # compute attention scores
         # [B, T, H] -> [B, T, 1]
-        h1 = self.layer(h)
+        h1 = self.layer(h[:,:,:200])
         # print(h1.shape)
-        # gaussians = MultivariateNormal(torch.zeros(h1.size()), scale_tril = torch.eye(h1.size())).rsample()
-        # h2 = h1+ gaussians
+
+        h2=self.layer2(h[:,:,200:]) 
+
+        # print(h2.shape)
 
         t = torch.full((batch_size, target_size + 1), float(self.transition))
         z = []
         num_states = 2
 
         for k in range(batch_size):
-            scores = h1[k].view(-1)
-            # print(scores.shape)
+            scores = h1[k].view(-1)#[:lengths[k]]
+            # scores
+            # print(scores.requires_grad)
+
+            scores_cov0 = h2[k].view(-1)#[:lengths[k]]
+
+            scores_cov = torch.cat(( (len(scores_cov0)-1) * torch.max(torch.abs(scores_cov0)).reshape(1), scores_cov0[1:]))
+            # scores_cov = torch.exp(-0.5 * torch.sort(scores_cov0 )[0])
+
+            # scale = nn.functional.softplus(scores_cov)
+            # scale = torch.exp(scores_cov) 
+
+            cov = toeplitz(scores_cov, scores_cov)
+            l = torch.linalg.cholesky(cov)
+            # print(l.requires_grad)
+
             gaussian = MultivariateNormal(torch.zeros(scores.size()).to(scores.device), scale_tril = torch.eye(scores.size()[0]).to(scores.device)).rsample()
-            scores = scores + gaussian
+            
+            # scores = scores + gaussian # perturb means
+            # scores = scores + scale*gaussian # diag cov
+            # scores = scores + torch.tril(torch.exp(toep))@gaussian
+            scores = scores + l@gaussian # toep cov 1
+
+            # print(scores.requires_grad)
+
             budget = torch.round(self.budget / 100 * lengths[k])
             length = scores.shape[0]
 
@@ -87,7 +121,7 @@ class MixedSPECTRAGenerator(nn.Module):
                 dim=-1,
             )
             x[lengths[k] :, 0] = -1e12
-            # print(x.shape)
+            # print(x.shape) # [T, 2] 
             # print(x)
 
             # Set transition scores for valid positions
@@ -128,11 +162,11 @@ class MixedSPECTRAGenerator(nn.Module):
                     step_size=self.step_size,
                 )
 
-            z_probs #.cuda()
+            # print(z_probs.shape) # [T]
             z.append(z_probs)
 
         z = torch.stack(z, dim=0).squeeze(-1)  # [B, T]
-        z = z #.cuda()
+        # z = z #.cuda()
         z = torch.where(mask, z, z.new_zeros([1]))
         self.z = z
 
@@ -182,6 +216,7 @@ class SPECTRAGenerator(nn.Module):
 
         # [B, T, H]
         h, _ = self.enc_layer(emb, mask, lengths)
+        # print('h', h.requires_grad)
 
         # compute attention scores
         # [B, T, H] -> [B, T, 1]
@@ -193,6 +228,7 @@ class SPECTRAGenerator(nn.Module):
 
         for k in range(batch_size):
             scores = h1[k].view(-1)
+            # print(scores)
             budget = torch.round(self.budget / 100 * lengths[k])
             length = scores.shape[0]
 

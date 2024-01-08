@@ -263,22 +263,22 @@ class BaseRationalizer(pl.LightningModule):
         }
 
         # log rationales
-        # from random import shuffle
-        # idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
-        # if prefix != 'test':
-        #     shuffle(idxs)
-        #     idxs = idxs[:10]
-        # else:
-        #     idxs = idxs[:100]
-        # select = lambda v: [v[i] for i in idxs]
+        from random import shuffle
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        if prefix != 'test':
+            shuffle(idxs)
+            idxs = idxs[:10]
+        else:
+            idxs = idxs[:100]
+        select = lambda v: [v[i] for i in idxs]
         detach = lambda v: [v[i].detach().cpu() for i in range(len(v))]
-        # pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
-        # scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
-        # gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
-        # pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
-        # lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
-        # html_string = get_html_rationales(pieces, scores, gold, pred, lens)
-        # self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
+        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        self.logger.experiment.log({f"{prefix}_rationales": wandb.Html(html_string)})
 
         # save rationales
         if self.hparams.save_rationales:
@@ -380,23 +380,23 @@ class BaseRationalizer(pl.LightningModule):
             on_epoch=True,
         )
 
-        if self.is_multilabel:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"{prefix}_precision": precision,
-                f"{prefix}_recall": recall,
-                f"{prefix}_f1score": f1_score,
-                f"{prefix}_accuracy": accuracy,
-            }
-        else:
-            output = {
-                f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
-                f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
-                f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
-            }
+        # if self.is_multilabel:
+        #     output = {
+        #         f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
+        #         f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
+        #         f"{prefix}_precision": precision,
+        #         f"{prefix}_recall": recall,
+        #         f"{prefix}_f1score": f1_score,
+        #         f"{prefix}_accuracy": accuracy,
+        #     }
+        # else:
+        #     output = {
+        #         f"avg_{prefix}_sum_loss": dict_metrics[f"avg_{prefix}_sum_loss"],
+        #         f"avg_{prefix}_ps": dict_metrics[f"avg_{prefix}_ps"],
+        #         f"avg_{prefix}_MSE": dict_metrics[f"avg_{prefix}_mse"],
+        #     }
 
-        return output
+        # return output
 
     def configure_optimizers(self):
         """Configure optimizers and lr schedulers for Trainer."""

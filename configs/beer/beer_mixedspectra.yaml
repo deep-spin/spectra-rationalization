@@ -14,9 +14,9 @@ train:
 
     # data
     dm: 'beer'                      # data module name (see docs for more options)
-    aspect_subset: 'aspect0'        # which aspect subset will be used for training and validation (see beer-dataset docs)
+    aspect_subset: 'aspect1'        # which aspect subset will be used for training and validation (see beer-dataset docs)
     batch_size: 32                 # minibatch size
-    num_workers: 4                  # number of workers used for data loading (0 means that only a single core will be used)
+    num_workers: 10                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
     transform_to_multiclass: False  # whether to transform the beer dataset into a multiclass problem (default: False)
 
@@ -55,8 +55,9 @@ train:
     hidden_size: 200
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
-    transition: 0.001
-    budget: 5
+    
+    transition: 0.01
+    budget: 10
     temperature: 0.05
 
     # trainer (will be passed to pytorch-lightning's Trainer object)

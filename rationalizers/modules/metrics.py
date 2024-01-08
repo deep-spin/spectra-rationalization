@@ -25,14 +25,13 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
         z_ex_nonzero_sum = z_ex_nonzero.sum().item()
 
         # make this work for multiple aspects
-        aspect_annotations = [ell for ell in annotations[i][0]]
+        aspect_annotations = [ell for ell in annotations[i][1]] #0: asepect0, 1: aspect1, 2:aspect2, 3:260k
         # aspect_annotations = unroll(annotations[i])
         annotations_range = [[a[0], a[1]] for a in aspect_annotations]
 
         if len(aspect_annotations) == 0:
             continue
-        # annotations_range = [[a[0], a[1]] for a in aspect_annotations]
-        # print(annotations_range[0], z_ex[0])
+
         matched = sum(
             1
             for i, zi in enumerate(z_ex)
