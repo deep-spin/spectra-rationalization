@@ -57,7 +57,7 @@ def run(args):
                     f"version{logger.version}",
                     "checkpoints",
                 ),
-                filename="{epoch}",
+                filename="{}-{}-{epoch}-{val_sum_loss:.2f}".format(args.seed, args.transition),
                 verbose=True,
                 save_last=True,
             )
@@ -68,7 +68,7 @@ def run(args):
                     f"version{logger.version}",
                     "checkpoints",
                 ),
-                filename="{epoch}",
+                filename="{epoch}-{val_sum_loss:.2f}",
                 monitor=args.monitor,
                 verbose=True,
                 mode=args.monitor_mode,

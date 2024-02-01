@@ -22,6 +22,9 @@ def toeplitz(c, r):
     i, j = torch.ones(*shape).nonzero().T
     return vals[j-i].reshape(*shape)
 
+def is_psd(mat):
+    return bool((mat == mat.T).all() and (torch.linalg.eigvals(mat).real>=0).all())
+
 class MixedSPECTRAGenerator(nn.Module):
     """
     The Generator takes an input text and returns samples from p(z|x)
@@ -48,8 +51,8 @@ class MixedSPECTRAGenerator(nn.Module):
         self.enc_layer = build_sentence_encoder(
             layer, emb_size, hidden_size, bidirectional=bidirectional
         )
-        self.layer = nn.Linear(200, 1)
-        self.layer2 = nn.Linear(200, 1)
+        self.layer = nn.Linear(hidden_size , 1)
+        self.layer2 = nn.Linear(hidden_size, 1)
 
         # self.self_scorer = SelfAdditiveScorer(enc_size, enc_size)
         self.init = init
@@ -59,6 +62,7 @@ class MixedSPECTRAGenerator(nn.Module):
         self.transition = transition
         self.budget = budget
         self.temperature = temperature
+        self.c = torch.tensor(0.001).cuda()
 
     def forward(self, x, current_epoch, mask):
         # encode sentence
@@ -68,15 +72,16 @@ class MixedSPECTRAGenerator(nn.Module):
 
         # [B, T, H]
         h, _ = self.enc_layer(emb, mask, lengths)
-        # print('h', h.requires_grad)
+        # print(h.shape)
 
         # compute attention scores
         # [B, T, H] -> [B, T, 1]
-        h1 = self.layer(h[:,:,:200])
+        # h1 =  self.layer(h)
+        # print(torch.cat((h[:,:,:200], h[:,:,400:600]), dim=-1).shape)
+        h1 = self.layer(torch.cat((h[:,:,:200], h[:,:,400:600]), dim=-1))
         # print(h1.shape)
 
-        h2=self.layer2(h[:,:,200:]) 
-
+        h2=self.layer2(torch.cat((h[:,:,200:400], h[:,:,600:800]), dim=-1))
         # print(h2.shape)
 
         t = torch.full((batch_size, target_size + 1), float(self.transition))
@@ -85,32 +90,46 @@ class MixedSPECTRAGenerator(nn.Module):
 
         for k in range(batch_size):
             scores = h1[k].view(-1)#[:lengths[k]]
+            length = scores.shape[0]
+
+            scores = scores[:lengths[k]]
+
             # scores
             # print(scores.requires_grad)
 
-            scores_cov0 = h2[k].view(-1)#[:lengths[k]]
+            scores_cov0 = h2[k].view(-1)[:lengths[k]]
+            # print(scores_cov0.shape)
 
-            scores_cov = torch.cat(( (len(scores_cov0)-1) * torch.max(torch.abs(scores_cov0)).reshape(1), scores_cov0[1:]))
-            # scores_cov = torch.exp(-0.5 * torch.sort(scores_cov0 )[0])
+            # scale = torch.exp(scores_cov0) 
 
-            # scale = nn.functional.softplus(scores_cov)
-            # scale = torch.exp(scores_cov) 
+            # scores_cov = torch.cat(((len(scores_cov0)-1) * torch.max(torch.abs(scores_cov0)).reshape(1), scores_cov0[1:]))
+            # cov = toeplitz(scores_cov, scores_cov)
 
-            cov = toeplitz(scores_cov, scores_cov)
-            l = torch.linalg.cholesky(cov)
-            # print(l.requires_grad)
+            d = len(scores_cov0)
+            v = torch.exp(-self.c * torch.arange(d).cuda()) # This seems to ensure psd too (although not necessarily diagonal dominance).
+            cov = toeplitz(v, v) * (scores_cov0[:,None]@scores_cov0[None,:])
+            # cov = torch.eye(scores.size()[0]).cuda() + scores_cov0[:,None]@scores_cov0[None,:]
+            
+            # print(is_psd(cov))
+            # print(torch.linalg.eigvals(cov))
+            try:
+                l = torch.linalg.cholesky(cov)
+            except:
+                print(torch.linalg.eigvals(cov))
 
-            gaussian = MultivariateNormal(torch.zeros(scores.size()).to(scores.device), scale_tril = torch.eye(scores.size()[0]).to(scores.device)).rsample()
+            gaussian = MultivariateNormal(torch.zeros(scores.size()).to(scores.device), \
+                                          scale_tril = torch.eye(scores.size()[0]).to(scores.device)).rsample()
             
             # scores = scores + gaussian # perturb means
             # scores = scores + scale*gaussian # diag cov
-            # scores = scores + torch.tril(torch.exp(toep))@gaussian
-            scores = scores + l@gaussian # toep cov 1
+            scores = scores + l@gaussian
+            scores = torch.cat((scores, torch.zeros((length-scores.shape[0] ), device=scores.device))) #repad to batch len 
 
+            # print(scores.shape)
             # print(scores.requires_grad)
 
             budget = torch.round(self.budget / 100 * lengths[k])
-            length = scores.shape[0]
+            # length = scores.shape[0]
 
             # Set unary scores for valid positions
             x = torch.cat(

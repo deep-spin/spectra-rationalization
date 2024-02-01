@@ -55,7 +55,7 @@ train:
     hidden_size: 200
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
-    transition: 0.1
+    transition: 0.001
     budget: 10
     temperature: 0.1
 

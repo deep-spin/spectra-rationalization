@@ -15,12 +15,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("task", type=str, choices=["train", "predict", "resume"])
     parser.add_argument("--config", type=str, help="Path to YAML config file.")
+    parser.add_argument("--default_root_dir", type=str, help="Path to save experiment.")
+
     parser.add_argument(
         "--ckpt",
         type=str,
         help="Path to a saved model checkpoint. Used for `predict` only. Will overwrite config file's option.",
     )
     parser.add_argument("--seed", type=int, help="Seed for reproducibility.")
+
+    parser.add_argument("--transition", type=float, help="Seq SparseMAP transition penalty.")
     tmp_args = parser.parse_args()
     tmp_dict_args = vars(tmp_args)
 
@@ -91,6 +95,12 @@ if __name__ == "__main__":
     # overwrite seed if it was passed as an argument
     if tmp_args.seed is not None:
         config_dict["seed"] = tmp_args.seed
+
+    if tmp_args.transition is not None:
+        config_dict["transition"] = tmp_args.transition 
+
+    if tmp_args.default_root_dir is not None:
+        config_dict["default_root_dir"] = tmp_args.default_root_dir 
 
     # define args
     args = argparse.Namespace(**config_dict)

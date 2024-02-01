@@ -1,6 +1,6 @@
 # general args
-seed: 38    # for reproducibility
-default_root_dir: 'experiments/beer-mixed-spectra/'  # path to save logs and models
+seed: 39    # for reproducibility
+default_root_dir: 'experiments/had-debug/'  # path to save logs and models
 
 
 # training args
@@ -52,11 +52,11 @@ train:
     emb_type: 'glove'
     emb_path: '840B'
     emb_size: 300
-    hidden_size: 200
+    hidden_size: 400
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
     
-    transition: 0.01
+    transition: 0.001
     budget: 10
     temperature: 0.05
 

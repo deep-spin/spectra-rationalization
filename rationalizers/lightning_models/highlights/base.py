@@ -266,7 +266,7 @@ class BaseRationalizer(pl.LightningModule):
         from random import shuffle
         idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
         if prefix != 'test':
-            shuffle(idxs)
+            # shuffle(idxs)
             idxs = idxs[:10]
         else:
             idxs = idxs[:100]
@@ -289,7 +289,7 @@ class BaseRationalizer(pl.LightningModule):
             save_rationales(filename, scores, lens)
 
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
-        if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+        if prefix == "test" and f"{prefix}_annotations" in stacked_outputs.keys():
             # print(stacked_outputs["test_ids_rationales"],
             #     stacked_outputs["test_annotations"],
             #     stacked_outputs["test_lengths"],)
@@ -298,17 +298,22 @@ class BaseRationalizer(pl.LightningModule):
             # print(len(stacked_outputs["test_lengths"]))
 
             rat_metrics = evaluate_rationale(
-                stacked_outputs["test_ids_rationales"],
-                stacked_outputs["test_annotations"],
-                stacked_outputs["test_lengths"],
-            )
+                    stacked_outputs[f"{prefix}_ids_rationales"],
+                    stacked_outputs[f"{prefix}_annotations"],
+                    stacked_outputs[f"{prefix}_lengths"],
+                )
             shell_logger.info(
-                f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"
-            )
+                    f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"
+                )
             shell_logger.info(
-                f"Rationales macro recall: {rat_metrics[f'macro_recall']:.4}"
-            )
+                    f"Rationales macro recall: {rat_metrics[f'macro_recall']:.4}"
+                )
             shell_logger.info(f"Rationales macro f1: {rat_metrics[f'f1_score']:.4}")
+
+            dict_metrics[f"{prefix}_precision"] = rat_metrics[f'macro_precision']
+            dict_metrics[f"{prefix}_recall"] = rat_metrics[f'macro_recall']
+            dict_metrics[f"{prefix}_f1score"] = rat_metrics[f'f1_score']
+
 
         # log classification metrics
         if self.is_multilabel:
