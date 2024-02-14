@@ -1,36 +1,37 @@
 # general args
 seed: 38    # for reproducibility
-default_root_dir: 'experiments/agnews-spectra'  # path to save logs and models
+default_root_dir: 'experiments/beer-mixed-spectra/'  # path to save logs and models
 
 
 # training args
 train:
 
     # io
-    save_rationales: True       # rationales will be saved in a .csv in the default_root_dir as `rationales-{timestamp}.csv`
+    save_rationales: True  
     save_tokenizer: True        # the tokenizer will be pickled and store in the checkpoint dir as `tokenizer.pickle`
     save_label_encoder: True    # the label encoder will be pickled and store in the checkpoint dir as `label_encoder.pickle`
     gpu_log: False              # whether to use the gpu callback to see gpu information in the logger
 
     # data
-    dm: 'ag_news'                     # data module name (see docs for more options)
-    batch_size: 32                  # minibatch size
+    dm: 'beer'                      # data module name (see docs for more options)
+    aspect_subset: 'aspect0'        # which aspect subset will be used for training and validation (see beer-dataset docs)
+    batch_size: 32                 # minibatch size
     num_workers: 4                  # number of workers used for data loading (0 means that only a single core will be used)
     vocab_min_occurrences:  1       # frequency for a token to be added to the vocabulary
+    transform_to_multiclass: False  # whether to transform the beer dataset into a multiclass problem (default: False)
 
     # early stopping
-    monitor: 'val_f1score'     # quantity to be monitored
-    monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
+    monitor: 'val_sum_loss'     # quantity to be monitored
+    monitor_mode: 'min'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
     monitor_patience: 5         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'spectra'
+    model: 'mixed_spectra'
     embed_fixed: True
-    classification: True
 
     # model: optimizer
     optimizer: 'adam'
-    lr: 0.001
+    lr: 0.0001
     weight_decay: 0.000001
     betas: [0.9, 0.999]
     amsgrad: False
@@ -49,24 +50,21 @@ train:
 
     # model: architecture
     emb_type: 'glove'
-    emb_path: '840B' 
+    emb_path: '840B'
     emb_size: 300
     hidden_size: 200
     dropout: 0.1
     sentence_encoder_layer_type: 'lstm'
     transition: 0.001
-    max_iter: 1
-    budget: 20
-    factor: "seq-budget"
+    budget: 5
     temperature: 0.05
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
     gpus: 1
     gradient_clip_val: 5.0
-    min_epochs: 5
-    max_epochs: 25
-    last_epoch: False
+    min_epochs: 1
+    max_epochs: 1
     #limit_test_batches:
     #limit_train_batches: 10
     #limit_val_batches: 2
@@ -79,4 +77,4 @@ predict:
     gpus: 1
     load_tokenizer: True       # load a trained tokenizer stored in the checkpoint dir as `tokenizer.pickle`
     load_label_encoder: True   # load a trained label encoder stored in the checkpoint dir as `label_encoder.pickle`
-    predicting: True
+    testing: True

@@ -12,66 +12,57 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Beer reviews from the Beer Advocate Dataset as preprocessed by McAuley et al. (2012)."""
+"""Hotel reviews from the TripAdvisor Dataset as preprocessed by Bao et al. (2018)"""
 
 from __future__ import absolute_import, division, print_function
 
-import json
 import os
+import csv
+import numpy as np
+
+import pdb
 import datasets
 
 _CITATION = """\
-@inproceedings{mcauley2012learning,
-  title={Learning attitudes and attributes from multi-aspect reviews},
-  author={McAuley, Julian and Leskovec, Jure and Jurafsky, Dan},
-  booktitle={2012 IEEE 12th International Conference on Data Mining},
-  pages={1020--1025},
-  year={2012},
-  organization={IEEE}
+@misc{bao2018deriving,
+      title={Deriving Machine Attention from Human Rationales}, 
+      author={Yujia Bao and Shiyu Chang and Mo Yu and Regina Barzilay},
+      year={2018},
+      eprint={1808.09367},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
 }
 """
 
 _DESCRIPTION = """\
-This dataset consists of beer reviews from beeradvocate.
-The data span a period of more than 10 years, including all ~1.5 million reviews up to November 2011.
-Each review includes ratings in terms of five "aspects": appearance, aroma, palate, taste, and overall impression.
-Reviews include product and user information, followed by each of these five ratings, and a plaintext review.
+This dataset consists of hotel reviews from TripAdvisor
 """
 
-_URL = (
-    "https://ndownloader.figshare.com/files/24730187?private_link=bef748392370c9eb1e55"
-)
-_ORIGINAL_URL_TRAIN = "http://people.csail.mit.edu/taolei/beer/reviews.{}.train.txt.gz"
-_ORIGINAL_URL_DEV = "http://people.csail.mit.edu/taolei/beer/reviews.{}.heldout.txt.gz"
-_ORIGINAL_URL_TEST = "http://people.csail.mit.edu/taolei/beer/annotations.json"
+_URL = "https://www.cs.virginia.edu/~hw5x/Data/LARA/TripAdvisor/TripAdvisor.tar.gz" #"http://web.tecnico.ulisboa.pt/~ist178550/hotel_location_proc.zip"
 
 
-class BeerAdvocateDatasetConfig(datasets.BuilderConfig):
-    """BuilderConfig for BeerAdvocateDataset"""
+class HotelLocationDatasetConfig(datasets.BuilderConfig):
+    """BuilderConfig for Hotel"""
 
-    def __init__(self, aspect_subset, **kwargs):
+    def __init__(self, **kwargs):
         """
         Args:
-            aspect_subset: the aspect subset (aspect0, aspect1, aspect2, 260k)
             **kwargs: keyword arguments forwarded to super.
         """
-        self.aspect_subset = aspect_subset
         super().__init__(**kwargs)
 
 
-class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
+class HotelLocationDataset(datasets.GeneratorBasedBuilder):
     """Beer reviews from beeradvocate. Version preprocessed by McAuley et al. (2012)."""
 
     VERSION = datasets.Version("1.0.0")
 
-    BUILDER_CONFIG_CLASS = BeerAdvocateDatasetConfig
+    BUILDER_CONFIG_CLASS = HotelLocationDatasetConfig
     BUILDER_CONFIGS = [
-        BeerAdvocateDatasetConfig(
-            name="beer_advocate_dataset_" + aspect_subset,
-            description="Beer reviews from beeradvocate.",
-            aspect_subset=aspect_subset,
+        HotelLocationDatasetConfig(
+            name="hotel_location_dataset_",
+            description="Hotel reviews for Location aspect.",
         )
-        for aspect_subset in ["aspect0", "aspect1", "aspect2", "260k"]
     ]
 
     def _info(self):
@@ -84,7 +75,7 @@ class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
                     "tokens": datasets.Value("string"),
                     # we have five scores (one for each aspect) normalized between 0 and 1
                     "scores": datasets.features.Sequence(
-                        datasets.Value("float"), length=5
+                        datasets.Value("float"), length=1
                     ),
                     "annotations": datasets.features.Sequence(
                         datasets.features.Sequence(
@@ -98,7 +89,7 @@ class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
             # builder.as_dataset.
             supervised_keys=None,
             # Homepage of the dataset for documentation
-            homepage="http://snap.stanford.edu/data/web-BeerAdvocate.html",
+            homepage="https://www.cs.virginia.edu/~hw5x/dataset.html",
             citation=_CITATION,
         )
 
@@ -108,24 +99,12 @@ class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
         # dl_manager is a datasets.download.DownloadManager that can be used to
         # download and extract URLs
         dl_dir = dl_manager.download_and_extract(_URL)
-        data_dir = os.path.join(dl_dir, "beeradvocate")
+        data_dir = dl_dir
         filepaths = {
-            "train": os.path.join(
-                data_dir, "reviews.{}.train.txt".format(self.config.aspect_subset)
-            ),
-            "dev": os.path.join(
-                data_dir, "reviews.{}.heldout.txt".format(self.config.aspect_subset)
-            ),
-            "test": os.path.join(data_dir, "annotations.json"),
+            "train": os.path.join(data_dir, "hotel_location/hotel_Location_train.csv"),
+            "dev": os.path.join(data_dir, "hotel_location/hotel_Location_dev.csv"),
+            "test": os.path.join(data_dir, "hotel_location/hotel_Location_test.csv"),
         }
-
-        # using original files from Tao Lei's website:
-        # dl_files = [
-        #     dl_manager.download_and_extract(_ORIGINAL_URL_TRAIN.format(self.config.aspect_subset)),
-        #     dl_manager.download_and_extract(_ORIGINAL_URL_DEV.format(self.config.aspect_subset)),
-        #     dl_manager.download(_ORIGINAL_URL_TEST)
-        # ]
-        # filepaths = {"train": dl_files[0], "dev": dl_files[1], "test": dl_files[2]}
 
         return [
             datasets.SplitGenerator(
@@ -151,29 +130,44 @@ class BeerAdvocateDataset(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, filepath, split):
         """Yields examples."""
         with open(filepath, "r", encoding="utf8") as f:
+            if split == "train":
+                f = csv.DictReader(f, delimiter=";")
+            else:
+                f = csv.DictReader(f, delimiter="\t")
             for id_, row in enumerate(f):
+                annotations = []
                 if split == "test":
-                    data = json.loads(row)
-                    tokens = " ".join(data["x"][:256])
-                    scores = data["y"]
-                    annotations = [
-                        data["0"],
-                        data["1"],
-                        data["2"],
-                        data["3"],
-                        data["4"],
-                    ]
+                    tokens = row["text"]
+                    scores = [float(row["label"])]
+                    raw_annotations = np.array(
+                        [int(s) for s in row["rationale"].split()]
+                    )
+                    a1 = raw_annotations > 0
+                    a1_rshifted = np.roll(a1, 1)
+                    starts = a1 & ~a1_rshifted
+                    ends = ~a1 & a1_rshifted
+                    if len(np.nonzero(starts)[0]) > 0:
+                        for i in range(len(np.nonzero(starts)[0])):
+                            annotations.append(
+                                [
+                                    np.nonzero(starts)[0][i].item(),
+                                    np.nonzero(ends)[0][i].item(),
+                                ]
+                            )
+                    else:
+                        annotations.append([])
+
                     yield id_, {
                         "tokens": tokens,
                         "scores": scores,
-                        "annotations": annotations,
+                        "annotations": [annotations],
                     }
+
                 else:
-                    data = row.split()
-                    tokens = " ".join(data[5:][:256])
-                    scores = list(map(float, data[:5]))
+                    tokens = row["text"]
+                    scores = [float(row["label"])]
                     yield id_, {
                         "tokens": tokens,
                         "scores": scores,
-                        "annotations": None,  # dummy value
+                        "annotations": [[[0]]],  # dummy value
                     }

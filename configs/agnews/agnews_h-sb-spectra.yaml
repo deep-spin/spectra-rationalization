@@ -1,6 +1,6 @@
 # general args
 seed: 38    # for reproducibility
-default_root_dir: 'experiments/agnews-spectra'  # path to save logs and models
+default_root_dir: 'experiments_nh:1/agnews-h-sb-spectra'  # path to save logs and models
 
 
 # training args
@@ -21,17 +21,17 @@ train:
     # early stopping
     monitor: 'val_f1score'     # quantity to be monitored
     monitor_mode: 'max'         # whether to see if monitored metric has stopped decreasing (min) or increasing (max)
-    monitor_patience: 5         # number of epochs to wait for early stopping
+    monitor_patience: 15         # number of epochs to wait for early stopping
 
     # pytorch-lightning rationalizer model
-    model: 'spectra'
+    model: 'h-spectra'
     embed_fixed: True
     classification: True
 
     # model: optimizer
     optimizer: 'adam'
-    lr: 0.001
-    weight_decay: 0.000001
+    lr: 0.0001
+    weight_decay: 0.0001
     betas: [0.9, 0.999]
     amsgrad: False
     momentum: 0.0
@@ -42,10 +42,17 @@ train:
     lambd: 0.0001  # for asgd
     t0: 1000000.0  # for asgd
 
-    # model: lr scheduler
-    scheduler: 'multistep'
+     # model: lr scheduler
+    scheduler: 'plateau'
     milestones: [25, 50, 75]
     lr_decay: 0.97  # a.k.a gamma
+    patience: 5
+    cooldown: 0
+    threshold: 0.0001
+    min_lr: 0
+    eta_min: 0.0000001
+    T_0: 2800
+    T_mult: 2
 
     # model: architecture
     emb_type: 'glove'
@@ -59,13 +66,15 @@ train:
     budget: 20
     factor: "seq-budget"
     temperature: 0.05
+    n_heads: 1
+    bag_dropout: 0.0
 
     # trainer (will be passed to pytorch-lightning's Trainer object)
     # see the complete list here: https://pytorch-lightning.readthedocs.io/en/stable/trainer.html#trainer-flags
     gpus: 1
     gradient_clip_val: 5.0
-    min_epochs: 5
-    max_epochs: 25
+    min_epochs: 45
+    max_epochs: 60
     last_epoch: False
     #limit_test_batches:
     #limit_train_batches: 10
