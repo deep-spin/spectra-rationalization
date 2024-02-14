@@ -92,15 +92,14 @@ if __name__ == "__main__":
     # define args
     args = argparse.Namespace(**config_dict)
     default_dir = args.default_root_dir
-    for iteration, seed in enumerate([38, 39, 40, 41, 42]):
-        iteration_logger = logging.getLogger(__name__)
-        # configure general stuff: seed and output dir
-        args.seed = seed
-        configure_seed(args.seed)
-
-        # set a general default root dir in case it was not set by the user and create nested directories
-        if args.default_root_dir is None:
-            args.default_root_dir = os.path.join("experiments/", args.dm, args.model)
+    iteration_logger = logging.getLogger(__name__)
+    # configure general stuff: seed and output dir
+    args.seed = seed
+    configure_seed(args.seed)
+    
+    # set a general default root dir in case it was not set by the user and create nested directories
+    if args.default_root_dir is None:
+        args.default_root_dir = os.path.join("experiments/", args.dm, args.model)
         args.default_root_dir = configure_output_dir(args.default_root_dir)
 
         # configure shell logger
