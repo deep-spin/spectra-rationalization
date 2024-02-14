@@ -11,10 +11,7 @@ from rationalizers.utils import (
     save_config_to_csv,
 )
 
-shell_logger = logging.getLogger(__name__)
-
-
-def run(args):
+def run(args, shell_logger):
     dict_args = vars(args)
     shell_logger.info("Building data: {}...".format(args.dm))
     dm_cls = available_data_modules[args.dm]

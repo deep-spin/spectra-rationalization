@@ -38,7 +38,7 @@ _DESCRIPTION = """\
 This dataset consists of hotel reviews from TripAdvisor
 """
 
-_URL = "http://web.tecnico.ulisboa.pt/~ist178550/hotel_location_proc.zip"
+_URL = "https://www.cs.virginia.edu/~hw5x/Data/LARA/TripAdvisor/TripAdvisor.tar.gz" #"http://web.tecnico.ulisboa.pt/~ist178550/hotel_location_proc.zip"
 
 
 class HotelLocationDatasetConfig(datasets.BuilderConfig):

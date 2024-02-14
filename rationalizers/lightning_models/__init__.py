@@ -1,5 +1,7 @@
 from rationalizers.lightning_models.highlights.bernoulli import BernoulliRationalizer
-from rationalizers.lightning_models.highlights.spectra import SPECTRARationalizer
+from rationalizers.lightning_models.highlights.spectra import SPECTRARationalizer, HSPECTRARationalizer
+from rationalizers.lightning_models.highlights.mixed_spectra import MixedSPECTRARationalizer
+
 from rationalizers.lightning_models.highlights.sparsemax import SparsemaxRationalizer
 from rationalizers.lightning_models.matchings.faithful_sparsemap_matching import (
     SparseMAPFaithfulMatching,
@@ -16,10 +18,12 @@ available_models = {
     "bernoulli": BernoulliRationalizer,
     "sparsemax": SparsemaxRationalizer,
     "spectra": SPECTRARationalizer,
+    "h-spectra": HSPECTRARationalizer,
     "sparsemap_faithfulmatching": SparseMAPFaithfulMatching,
     "gumbel_matching": GumbelMatching,
     "relaxed_bernoulli": RelaxedBernoulliRationalizer,
     "vanilla": VanillaClassifier,
     "esim": ESIMMatching,
     "hardkuma": HardKumaRationalizer,
+    "mixed_spectra": MixedSPECTRARationalizer,
 }

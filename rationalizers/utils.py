@@ -172,7 +172,7 @@ def get_rationales(
 
     :return: list of lists containing the selected rationales
     """
-    z = z.cuda()
+    z = z #.cuda()
     selected_ids = (z * input_ids).long()
     selected_rationales = tokenizer.batch_decode(selected_ids, lengths)
 
@@ -190,7 +190,7 @@ def get_z_stats(z=None, mask=None):
     :param mask: mask in [B, T]
     :return:
     """
-    z = z.cuda()
+    z = z #.cuda()
     z = torch.where(mask, z, z.new_full([1], 1e2))
 
     num_0 = (z == 0.0).sum().item()
@@ -254,3 +254,60 @@ def unroll(list_of_lists, rec=False):
     if rec and isinstance(new_list[0], (np.ndarray, list, torch.Tensor)):
         return unroll(new_list, rec=rec)
     return new_list
+
+def get_html_rationales(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
+    def colorize_two_way(tokens, scores, gold_l, pred_l, leng):
+        template_pos = '<span style="color: black; background-color: rgba(0, 255, 0, {}); ' \
+                       'display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
+        template_neg = '<span style="color: black; background-color: rgba(255, 0, 0, {}); ' \
+                       'display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
+        text = ''
+        f = lambda w: w.replace('<', 'ᐸ').replace('>', 'ᐳ')
+        for word, color in zip(tokens[:leng], scores[:leng]):
+            if color >= 0:
+                text += template_pos.format(color, f(word))
+            else:
+                text += template_neg.format(-color, f(word))
+        html_text = '<div style="width:100%">g: {} | p: {}:&nbsp;&nbsp; {}</div>'.format(
+            gold_l, pred_l.argmax(), text
+        )
+        return html_text
+    html_texts = []
+    for t, s, gl, pl, l in zip(all_tokens, all_scores, all_gold_labels, all_pred_labels, all_lengths):
+        html_texts.append(colorize_two_way(t, s, gl, pl, l))
+    return '<br>'.join(html_texts)
+
+def get_html_rationales_human(all_tokens, all_rationales, all_lengths, aspect):
+    def colorize(tokens, rationales, length):
+        template_pos = '<span style="color: black; background-color: rgba(0, 255, 0, {}); ' \
+                       'display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
+        template_no_rationale = '<span style="color: black; display:inline-block; font-size:12px;">&nbsp {} &nbsp</span>'
+        
+        f = lambda w: w.replace('<', 'ᐸ').replace('>', 'ᐳ')
+        
+        text = ''
+        for i, word in enumerate(tokens[:length]):
+            if any(start <= i < end for sublist in rationales for start, end in [sublist]):
+                #print(i)
+                #print(rationales)
+                # Token index is within a rationale range
+                text += template_pos.format(0.7, f(word))
+            else:
+                # Token index is not within a rationale range
+                text += template_no_rationale.format(f(word))
+        return text
+
+    html_texts = []
+
+    for t, r, l in zip(all_tokens, all_rationales, all_lengths):
+        rationale_html = colorize(t, r[0][aspect], l)
+        html_texts.append('<div style="width:100%">' + rationale_html + '</div>')
+
+    return '<br>'.join(html_texts)
+
+def save_rationales(filename, all_scores, all_lengths):
+    f = open(filename, 'w', encoding='utf8')
+    for scores, leng in zip(all_scores, all_lengths):
+        text = ' '.join(['{:.4f}'.format(z) for z in scores[:leng].tolist()])
+        f.write(text + '\n')
+    f.close()

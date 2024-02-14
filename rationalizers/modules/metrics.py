@@ -4,7 +4,7 @@
 from rationalizers.utils import unroll
 
 
-def evaluate_rationale(test_ids, annotations, lengths) -> dict:
+def evaluate_rationale(test_ids, annotations, lengths, aspect) -> dict:
     """
     Function that computes the token F1 Score (matching with annotations).
 
@@ -16,6 +16,8 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
     test_ids = unroll(test_ids)
     annotations = unroll(annotations)
     lengths = unroll(lengths)
+    print(len(test_ids), len(annotations), len(lengths))
+    # print(annotations)
 
     for i in range(len(test_ids)):
         z_ex = test_ids[i][: lengths[i]]
@@ -23,10 +25,14 @@ def evaluate_rationale(test_ids, annotations, lengths) -> dict:
         z_ex_nonzero_sum = z_ex_nonzero.sum().item()
 
         # make this work for multiple aspects
-        aspect_annotations = [ell.tolist() for ell in annotations[i][0]]
+        aspect_annotations = [ell for ell in annotations[i][aspect]]
+        # aspect_annotations = unroll(annotations[i])
+        annotations_range = [[a[0], a[1]] for a in aspect_annotations]
+
         if len(aspect_annotations) == 0:
             continue
-        annotations_range = [[a[0], a[1]] for a in aspect_annotations]
+        # annotations_range = [[a[0], a[1]] for a in aspect_annotations]
+        # print(annotations_range[0], z_ex[0])
         matched = sum(
             1
             for i, zi in enumerate(z_ex)

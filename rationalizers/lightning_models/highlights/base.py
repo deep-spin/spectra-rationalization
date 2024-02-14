@@ -1,7 +1,11 @@
 import logging
 import math
+import os
+import re
+import wandb
 import numpy as np
 import pytorch_lightning as pl
+import torchmetrics
 import torch
 from torch.nn.init import _calculate_fan_in_and_fan_out
 from torchnlp.encoders.text import StaticTokenizerEncoder
@@ -10,7 +14,7 @@ from torch import nn
 from rationalizers import constants
 from rationalizers.builders import build_optimizer, build_scheduler
 from rationalizers.modules.metrics import evaluate_rationale
-from rationalizers.utils import get_rationales
+from rationalizers.utils import get_rationales, get_html_rationales, unroll, save_rationales, get_html_rationales_human
 
 shell_logger = logging.getLogger(__name__)
 
@@ -40,24 +44,24 @@ class BaseRationalizer(pl.LightningModule):
 
         # define metrics
         if self.is_multilabel:
-            self.train_accuracy = pl.metrics.Accuracy()
-            self.val_accuracy = pl.metrics.Accuracy()
-            self.test_accuracy = pl.metrics.Accuracy()
-            self.train_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.test_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_classes)
+            self.train_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.val_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.val_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.test_precision = pl.metrics.Precision(
-                num_classes=nb_classes, average="macro"
+            self.test_precision = torchmetrics.Precision(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.train_recall = pl.metrics.Recall(
-                num_classes=nb_classes, average="macro"
+            self.train_recall = torchmetrics.Recall(
+               task="multiclass", num_classes=nb_classes, average="macro"
             )
-            self.val_recall = pl.metrics.Recall(num_classes=nb_classes, average="macro")
-            self.test_recall = pl.metrics.Recall(
-                num_classes=nb_classes, average="macro"
+            self.val_recall = torchmetrics.Recall(task="multiclass", num_classes=nb_classes, average="macro")
+            self.test_recall = torchmetrics.Recall(
+                task="multiclass", num_classes=nb_classes, average="macro"
             )
 
         # define loss function
@@ -75,6 +79,15 @@ class BaseRationalizer(pl.LightningModule):
         self.sentence_encoder_layer_type = h_params.get(
             "sentence_encoder_layer_type", "rcnn"
         )
+        self.model = h_params.get(
+            "model", "h-spectra"
+        )
+        self.seed = h_params.get(
+            "seed", 39
+        )
+        self.aspect = h_params.get(
+            "aspect_subset", 'aspect0'
+        )
         self.predicting = h_params.get("predicting", False)
 
         # save hyperparams to be accessed via self.hparams
@@ -91,8 +104,11 @@ class BaseRationalizer(pl.LightningModule):
         :param mask: mask tensor for padding positions. torch.BoolTensor of shape [B, T]
         :return: the output from SentimentPredictor. Torch.Tensor of shape [B, C]
         """
-        z = self.generator(x, mask=mask)
-        y_hat = self.predictor(x, z, mask=mask)
+        if self.model[0] == "h":
+            y_hat, z = self.predictor(x, None, mask=mask)
+        else:
+            z = self.generator(x, mask=mask)
+            y_hat = self.predictor(x, z, mask=mask)
         return z, y_hat
 
     def training_step(self, batch: dict, batch_idx: int):
@@ -181,6 +197,11 @@ class BaseRationalizer(pl.LightningModule):
             self.tokenizer, input_ids, z_1, batch["lengths"]
         )
 
+        if hasattr(self.tokenizer, 'convert_ids_to_tokens'):
+            pieces = [self.tokenizer.convert_ids_to_tokens(idxs) for idxs in input_ids.tolist()]
+        else:
+            pieces = [[self.tokenizer.index_to_token[i] for i in idxs] for idxs in input_ids.tolist()]
+
         self.log(
             f"{prefix}_sum_loss",
             loss.item(),
@@ -196,7 +217,9 @@ class BaseRationalizer(pl.LightningModule):
             f"{prefix}_ps": loss_stats[prefix + "_ps"],
             f"{prefix}_ids_rationales": ids_rationales,
             f"{prefix}_rationales": rationales,
+            f"{prefix}_pieces": pieces,
             f"{prefix}_tokens": batch["tokens"],
+            f"{prefix}_z": z,
             f"{prefix}_predictions": y_hat,
             f"{prefix}_labels": batch["labels"].tolist(),
             f"{prefix}_lengths": batch["lengths"].tolist(),
@@ -204,6 +227,8 @@ class BaseRationalizer(pl.LightningModule):
 
         if "annotations" in batch.keys():
             output[f"{prefix}_annotations"] = batch["annotations"]
+
+        # print("ANNOT", len(batch["annotations"]))
 
         if "mse" in loss_stats.keys():
             output[f"{prefix}_mse"] = loss_stats["mse"]
@@ -250,12 +275,54 @@ class BaseRationalizer(pl.LightningModule):
             f"avg_{prefix}_sum_loss": avg_outputs[f"avg_{prefix}_sum_loss"],
         }
 
+        #log rationales
+        from random import shuffle
+        idxs = list(range(sum(map(len, stacked_outputs[f"{prefix}_pieces"]))))
+        if prefix != 'test':
+            shuffle(idxs)
+            idxs = idxs[:10]
+        else:
+            idxs = idxs[:100]
+        select = lambda v: [v[i] for i in idxs]
+        detach = lambda v: [v[i].detach().cpu() for i in range(len(v))] 
+        pieces = select(unroll(stacked_outputs[f"{prefix}_pieces"]))
+        scores = detach(select(unroll(stacked_outputs[f"{prefix}_z"])))
+        gold = select(unroll(stacked_outputs[f"{prefix}_labels"]))
+        pred = detach(select(unroll(stacked_outputs[f"{prefix}_predictions"])))
+        lens = select(unroll(stacked_outputs[f"{prefix}_lengths"]))
+        html_string = get_html_rationales(pieces, scores, gold, pred, lens)
+        filename = self.hparams.default_root_dir
+        self.logger.experiment.log({f"{prefix}_rationales_{str(self.seed)}": wandb.Html(html_string)})
+        if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+            with open(filename + f"/{prefix}_rationales_{str(self.seed)}.html", "w") as html_file:
+                html_file.write(html_string)
+        
+        # save rationales
+        if self.hparams.save_rationales:
+            scores = detach(unroll(stacked_outputs[f"{prefix}_z"]))
+            lens = unroll(stacked_outputs[f"{prefix}_lengths"])
+            filename = os.path.join(self.hparams.default_root_dir, f'{prefix}_rationales.txt')
+            shell_logger.info(f'Saving rationales in {filename}...')
+            save_rationales(filename, scores, lens)
+
         # only evaluate rationales on the test set and if we have annotation (only for beer dataset)
         if prefix == "test" and "test_annotations" in stacked_outputs.keys():
+            # print(stacked_outputs["test_ids_rationales"],
+            #     stacked_outputs["test_annotations"],
+            #     stacked_outputs["test_lengths"],)
+            # print(len(stacked_outputs["test_annotations"]))
+            # print(len(stacked_outputs["test_ids_rationales"]))
+            # print(len(stacked_outputs["test_lengths"]))
+            html_string = get_html_rationales_human(pieces, stacked_outputs[f"{prefix}_annotations"],lens, int(re.findall(r'\d+', self.aspect)[0]))
+            self.logger.experiment.log({f"{prefix}_rationales_human_{str(self.seed)}": wandb.Html(html_string)})
+            filename = self.hparams.default_root_dir
+            with open(filename + f"/{prefix}_human_rationales_{str(self.seed)}.html", "w") as html_file:
+                html_file.write(html_string)
             rat_metrics = evaluate_rationale(
                 stacked_outputs["test_ids_rationales"],
                 stacked_outputs["test_annotations"],
                 stacked_outputs["test_lengths"],
+                int(re.findall(r'\d+', self.aspect)[0]),
             )
             shell_logger.info(
                 f"Rationales macro precision: {rat_metrics[f'macro_precision']:.4}"

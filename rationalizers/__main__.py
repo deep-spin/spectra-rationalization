@@ -1,5 +1,7 @@
 import argparse
 import os
+import logging
+import numpy as np
 
 from rationalizers import predict, train, resume
 from rationalizers.utils import (
@@ -13,8 +15,8 @@ from rationalizers.utils import (
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", type=str, choices=["train", "predict", "resume"])
-    parser.add_argument("--config", type=str, help="Path to YAML config file.")
+    parser.add_argument("task", type=str, default = "train", choices=["train", "predict", "resume"])
+    parser.add_argument("--config", type=str, help="configs/agnews/agnews_spectra.yaml")
     parser.add_argument(
         "--ckpt",
         type=str,
@@ -89,22 +91,26 @@ if __name__ == "__main__":
 
     # define args
     args = argparse.Namespace(**config_dict)
-    # configure general stuff: seed and output dir
-    configure_seed(args.seed)
+    default_dir = args.default_root_dir
+    for iteration, seed in enumerate([38, 39, 40, 41, 42]):
+        iteration_logger = logging.getLogger(__name__)
+        # configure general stuff: seed and output dir
+        args.seed = seed
+        configure_seed(args.seed)
 
-    # set a general default root dir in case it was not set by the user and create nested directories
-    if args.default_root_dir is None:
-        args.default_root_dir = os.path.join("experiments/", args.dm, args.model)
-    args.default_root_dir = configure_output_dir(args.default_root_dir)
+        # set a general default root dir in case it was not set by the user and create nested directories
+        if args.default_root_dir is None:
+            args.default_root_dir = os.path.join("experiments/", args.dm, args.model)
+        args.default_root_dir = configure_output_dir(args.default_root_dir)
 
-    # configure shell logger
-    configure_shell_logger(args.default_root_dir)
+        # configure shell logger
+        configure_shell_logger(args.default_root_dir)
 
-    # train or predict!
-    if tmp_args.task == "train":
-        train.run(args)
-    elif tmp_args.task == "resume":
-        resume.run(args)
-    elif tmp_args.task == "predict":
-        predict.run(args)
-        # search.run(args)
+        # train or predict!
+        if tmp_args.task == "train":
+            train.run(args, iteration_logger)
+        elif tmp_args.task == "resume":
+            resume.run(args)
+        elif tmp_args.task == "predict":
+            predict.run(args)
+            # search.run(args)
